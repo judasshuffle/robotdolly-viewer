@@ -2229,7 +2229,7 @@ class RobotDollyWorkspaceView : public LLView
 {
 public:
     explicit RobotDollyWorkspaceView(const LLView::Params& params)
-        : LLView(params), mDivider(850), mDragging(false), mShowChat(true) {}
+        : LLView(params), mDivider(850), mDragging(false), mShowChat(true), mWorldOnLeft(true) {}
 
     // Scale the split when the viewer window itself changes size.
     // LLView's FOLLOWS_ALL changes our bounds, but mDivider was fixed in pixels.
@@ -2256,14 +2256,22 @@ public:
     LLRect worldRect() const
     {
         const LLRect on_screen = calcScreenRect();
-        return LLRect(on_screen.mLeft, on_screen.mTop,
-                      on_screen.mLeft + mDivider, on_screen.mBottom);
+        return mWorldOnLeft
+            ? LLRect(on_screen.mLeft, on_screen.mTop,
+                     on_screen.mLeft + mDivider, on_screen.mBottom)
+            : LLRect(on_screen.mLeft + mDivider, on_screen.mTop,
+                     on_screen.mRight, on_screen.mBottom);
     }
+    bool worldOnLeft() const { return mWorldOnLeft; }
+    S32 divider() const { return mDivider; }
     LLRect chatRect() const
     {
         const LLRect r = calcScreenRect();
-        return LLRect(r.mLeft + mDivider + 5, r.mTop - 2,
-                      r.mRight - 5, r.mBottom + 3);
+        return mWorldOnLeft
+            ? LLRect(r.mLeft + mDivider + 5, r.mTop - 2,
+                     r.mRight - 5, r.mBottom + 3)
+            : LLRect(r.mLeft + 5, r.mTop - 2,
+                     r.mLeft + mDivider - 5, r.mBottom + 3);
     }
 
 
@@ -2280,29 +2288,42 @@ public:
         gl_rect_2d(area, border, false);
         gl_rect_2d(LLRect(divider - 2, top, divider + 2, bottom), border, true);
         const LLFontGL* font = LLFontGL::getFontSansSerif();
-        font->renderUTF8("ROBOT DOLLY | WORLD VIEW", 0, 10, top - 9,
+        const S32 world_label_x = mWorldOnLeft ? 10 : divider + 20;
+        const S32 chat_label_x = mWorldOnLeft ? divider + 12 : 12;
+        font->renderUTF8("ROBOT DOLLY | WORLD VIEW", 0, world_label_x, top - 9,
             LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
-        font->renderUTF8("CHAT", 0, divider + 12, top - 44,
+        font->renderUTF8("CHAT", 0, chat_label_x, top - 44,
             LLColor4(1.f, 1.f, 1.f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
-        font->renderUTF8("Drag divider", 0, divider + 12, top - 68,
+        font->renderUTF8("Drag divider", 0, chat_label_x, top - 68,
             border, LLFontGL::LEFT, LLFontGL::TOP);
         if (!mShowChat)
         {
-            gl_rect_2d(LLRect(divider + 3, top, area.mRight, bottom),
+            gl_rect_2d(mWorldOnLeft
+                           ? LLRect(divider + 3, top, area.mRight, bottom)
+                           : LLRect(area.mLeft, top, divider - 3, bottom),
                        LLColor4(0.055f, 0.07f, 0.09f, 1.f), true);
-            font->renderUTF8("EMPTY EDITOR AREA", 0, divider + 20, top - 65,
+            font->renderUTF8("EMPTY EDITOR AREA", 0, chat_label_x + 8, top - 65,
                 border, LLFontGL::LEFT, LLFontGL::TOP);
         }
         LLView::draw();
-        gl_rect_2d(LLRect(divider + 6, top - 34, divider + 188, top - 5),
+        const S32 editor_x = mWorldOnLeft ? divider + 6 : 6;
+        gl_rect_2d(LLRect(editor_x, top - 34, editor_x + 182, top - 5),
                    LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
         // Match the labels to their independent click regions.
         font->renderUTF8(mShowChat ? "[CHAT]" : "CHAT", 0,
-                         divider + 16, top - 11,
+                         editor_x + 10, top - 11,
                          LLColor4(1.f, 0.9f, 0.35f, 1.f),
                          LLFontGL::LEFT, LLFontGL::TOP);
         font->renderUTF8(mShowChat ? "EMPTY" : "[EMPTY]", 0,
-                         divider + 110, top - 11,
+                         editor_x + 104, top - 11,
+                         LLColor4(1.f, 0.9f, 0.35f, 1.f),
+                         LLFontGL::LEFT, LLFontGL::TOP);
+        // This is a transitional swap control; universal per-area selectors
+        // will replace it when the split-tree workspace is integrated.
+        const S32 swap_x = mWorldOnLeft ? 235 : divider + 235;
+        gl_rect_2d(LLRect(swap_x, top - 34, swap_x + 96, top - 5),
+                   LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
+        font->renderUTF8("SWAP <->", 0, swap_x + 8, top - 11,
                          LLColor4(1.f, 0.9f, 0.35f, 1.f),
                          LLFontGL::LEFT, LLFontGL::TOP);
     }
@@ -2310,10 +2331,18 @@ public:
     bool handleMouseDown(S32 x, S32 y, MASK mask) override
     {
         const S32 top = getLocalRect().mTop;
-        if (x >= mDivider + 6 && x <= mDivider + 188 &&
+        const S32 swap_x = mWorldOnLeft ? 235 : mDivider + 235;
+        if (x >= swap_x && x <= swap_x + 96 &&
             y <= top - 5 && y >= top - 34)
         {
-            mShowChat = x < mDivider + 100;
+            mWorldOnLeft = !mWorldOnLeft;
+            return true;
+        }
+        const S32 editor_x = mWorldOnLeft ? mDivider + 6 : 6;
+        if (x >= editor_x && x <= editor_x + 182 &&
+            y <= top - 5 && y >= top - 34)
+        {
+            mShowChat = x < editor_x + 94;
             if (LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance())
                 if (chat->getParent() == this) chat->setVisible(mShowChat);
             return true;
@@ -2353,6 +2382,7 @@ private:
     S32 mDivider;
     bool mDragging;
     bool mShowChat;
+    bool mWorldOnLeft;
 };
 
 static RobotDollyWorkspaceView* sRobotDollyWorkspace = nullptr;
@@ -3025,11 +3055,17 @@ void LLViewerWindow::draw()
     // Use reshape to propagate width changes to toolbar child layouts.
     if (sRobotDollyWorkspace && gToolBarView)
     {
-        const S32 world_width = sRobotDollyWorkspace->worldRect().getWidth();
+        const LLRect world = sRobotDollyWorkspace->worldRect();
+        const S32 world_width = world.getWidth();
         const LLRect toolbar_rect = gToolBarView->getRect();
         if (world_width > 0 && toolbar_rect.getWidth() != world_width)
-        {
             gToolBarView->reshape(world_width, toolbar_rect.getHeight());
+        // Move toolbar to follow the world when editors exchange sides.
+        if (gToolBarView->getRect().mLeft != world.mLeft)
+        {
+            LLRect moved = gToolBarView->getRect();
+            moved.translate(world.mLeft - moved.mLeft, 0);
+            gToolBarView->setRect(moved);
         }
     }
 
@@ -3040,9 +3076,12 @@ void LLViewerWindow::draw()
         if (chat && chat->getVisible())
         {
             const LLRect area = sRobotDollyWorkspace->getLocalRect();
-            const S32 divider = sRobotDollyWorkspace->worldRect().getWidth();
-            const LLRect dock(divider + 5, area.mTop - 3,
-                              area.mRight - 5, area.mBottom + 4);
+            const S32 divider = sRobotDollyWorkspace->divider();
+            const LLRect dock = sRobotDollyWorkspace->worldOnLeft()
+                ? LLRect(divider + 5, area.mTop - 3,
+                         area.mRight - 5, area.mBottom + 4)
+                : LLRect(5, area.mTop - 3,
+                         divider - 5, area.mBottom + 4);
             if (dock.getWidth() >= 280 && dock.getHeight() >= 180)
             {
                 if (chat->getParent() != sRobotDollyWorkspace)
