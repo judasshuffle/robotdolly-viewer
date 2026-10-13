@@ -2917,12 +2917,30 @@ void LLViewerWindow::draw()
             LLFontGL::LEFT, LLFontGL::TOP);
     }
 
-    // ROBOT DOLLY: first visible integration marker, no renderer changes.
+    // ROBOT DOLLY: non-interactive two-area workspace overlay.
+    // Renderer, mouse input and camera remain untouched.
     {
-        const LLFontGL* rd_font = LLFontGL::getFontSansSerif();
-        rd_font->renderUTF8("ROBOT DOLLY - workspace test", 0,
-            16, ll_round(getWindowHeightScaled() - 86.f),
-            LLColor4(1.f, 0.9f, 0.35f, 1.f),
+        const S32 left = 16;
+        const S32 top = getWindowHeightScaled() - 86;
+        const S32 split = left + 280;
+        const S32 bottom = top - 110;
+        const LLColor4 border(0.65f, 0.70f, 0.77f, 1.f);
+        gl_rect_2d(LLRect(left, top, left + 460, bottom),
+                   LLColor4(0.055f, 0.07f, 0.09f, 0.86f), true);
+        gl_rect_2d(LLRect(left, top, left + 460, bottom), border, false);
+        gl_rect_2d(LLRect(split, top, split + 1, bottom), border, true);
+        const LLFontGL* font = LLFontGL::getFontSansSerif();
+        font->renderUTF8("ROBOT DOLLY  |  WORKSPACE", 0,
+            left + 10, top - 9, LLColor4(1.f, 0.9f, 0.35f, 1.f),
+            LLFontGL::LEFT, LLFontGL::TOP);
+        font->renderUTF8("WORLD VIEW  [placeholder]", 0,
+            left + 10, top - 44, LLColor4(1.f, 1.f, 1.f, 1.f),
+            LLFontGL::LEFT, LLFontGL::TOP);
+        font->renderUTF8("CHAT", 0,
+            split + 12, top - 44, LLColor4(1.f, 1.f, 1.f, 1.f),
+            LLFontGL::LEFT, LLFontGL::TOP);
+        font->renderUTF8("Placeholder", 0,
+            split + 12, top - 68, border,
             LLFontGL::LEFT, LLFontGL::TOP);
     }
 
