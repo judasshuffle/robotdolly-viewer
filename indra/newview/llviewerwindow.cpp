@@ -4325,6 +4325,15 @@ void LLViewerWindow::updateWorldViewRect(bool use_full_window)
         new_world_rect.mRight = ll_round((F32)new_world_rect.mRight * mDisplayScale.mV[VX]);
         new_world_rect.mBottom = ll_round((F32)new_world_rect.mBottom * mDisplayScale.mV[VY]);
         new_world_rect.mTop = ll_round((F32)new_world_rect.mTop * mDisplayScale.mV[VY]);
+
+        // ROBOT DOLLY proof of concept: reserve a right-hand editor column
+        // from the *real* 3D world viewport, not just its UI overlay.
+        // The normal full-window path (e.g. snapshots) remains unchanged.
+        const S32 reserved_width = ll_round(320.f * mDisplayScale.mV[VX]);
+        if (new_world_rect.getWidth() > reserved_width + 320)
+        {
+            new_world_rect.mRight -= reserved_width;
+        }
     }
 
     if (mWorldViewRectRaw != new_world_rect)
