@@ -1,134 +1,230 @@
-// ROBOT DOLLY: standalone Win32 workspace preview (not connected to SL).
+// ROBOT DOLLY workspace v0.2 - standalone Win32 preview (not connected to SL).
+// Right-click any panel to split or close it; drag borders to resize.
 #define UNICODE
 #define _UNICODE
-#define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <windowsx.h>
 #include <algorithm>
-#include <string>
+#include <memory>
+#include <vector>
 #include "../workspace_model.h"
-#pragma comment(lib, "user32.lib")
-#pragma comment(lib, "gdi32.lib")
+#pragma comment(lib,"user32.lib")
+#pragma comment(lib,"gdi32.lib")
 
 namespace {
-const wchar_t* names[]={L"3D World",L"Chat",L"Inventory",L"Landmarks"};
-const char* types[]={"sl.world","sl.chat","sl.inventory","sl.landmarks"};
+using robotdolly::AreaId;
+using robotdolly::LayoutNode;
+using robotdolly::SplitAxis;
+constexpr int Gap=8,Header=32,ComboBase=2000;
+const wchar_t* Names[]={L"3D World",L"Chat",L"Inventory",L"Landmarks"};
+const char* Types[]={"sl.world","sl.chat","sl.inventory","sl.landmarks"};
 robotdolly::EditorRegistry registry=robotdolly::makeDefaultRegistry();
-robotdolly::Workspace model(registry);
-HWND windowHandle=nullptr,selectors[3]={};
-int dividerX=680,dividerY=340;
-bool movingX=false,movingY=false;
-int modes[3]={0,1,2};
+std::unique_ptr<robotdolly::Workspace> space;
+struct Pane {AreaId id; RECT box; HWND selector;};
+struct Divider {AreaId left,right; RECT hit,bounds; SplitAxis axis;};
+std::vector<Pane> panes;
+std::vector<Divider> dividers;
+HWND mainWindow=nullptr;
+AreaId menuArea=0;
+Divider dragDivider={};
+bool dragging=false;
+int nextCombo=0;
 
-RECT area(int n,RECT client) {
-    client.left+=8;client.top+=8;client.right-=8;client.bottom-=8;
-    if(n==0) client.right=dividerX-4;
-    else {client.left=dividerX+4;if(n==1)client.bottom=dividerY-4;else client.top=dividerY+4;}
-    return client;
+AreaId firstLeaf(const LayoutNode* n) {
+    while(n->is_split)n=n->first.get();
+    return n->area.id;
 }
-void arrange() {
-    if(!windowHandle)return;
-    RECT r;GetClientRect(windowHandle,&r);
-    dividerX=std::clamp(dividerX,140,std::max(141,static_cast<int>(r.right)-140));
-    dividerY=std::clamp(dividerY,110,std::max(111,static_cast<int>(r.bottom)-110));
-    for(int i=0;i<3;++i) if(selectors[i]){
-        RECT a=area(i,r);
-        MoveWindow(selectors[i],a.left+7,a.top+4,
-            std::max(100,static_cast<int>(a.right-a.left)-14),180,TRUE);
-    }
-    InvalidateRect(windowHandle,nullptr,TRUE);
+AreaId lastLeaf(const LayoutNode* n) {
+    while(n->is_split)n=n->second.get();
+    return n->area.id;
 }
-void drawText(HDC dc,int x,int y,const wchar_t* s,COLORREF color){
-    SetTextColor(dc,color);SetBkMode(dc,TRANSPARENT);
-    TextOutW(dc,x,y,s,lstrlenW(s));
+const robotdolly::Area* findArea(const LayoutNode* n,AreaId id) {
+    if(!n->is_split)return n->area.id==id?&n->area:nullptr;
+    if(auto* found=findArea(n->first.get(),id))return found;
+    return findArea(n->second.get(),id);
 }
-void paintArea(HDC dc,RECT a,int mode){
-    HBRUSH body=CreateSolidBrush(RGB(44,48,54));
-    HBRUSH header=CreateSolidBrush(RGB(68,72,80));
-    FillRect(dc,&a,body);
-    RECT h=a;h.bottom=std::min(a.bottom,a.top+31);
-    FillRect(dc,&h,header);
-    DeleteObject(header);DeleteObject(body);
-    int x=a.left+13,y=a.top+50;
-    if(mode==0){
-        drawText(dc,x,y,L"SECOND LIFE WORLD",RGB(226,231,235));
-        drawText(dc,x,y+27,L"Live rendering will be connected later.",RGB(166,177,188));
-    }else if(mode==1){
-        drawText(dc,x,y,L"Nearby chat / IM / Group",RGB(226,231,235));
-        drawText(dc,x,y+28,L"Conversation placeholder (not online yet)",RGB(166,177,188));
-    }else if(mode==2){
-        drawText(dc,x,y,L"> My Inventory",RGB(226,231,235));
-        drawText(dc,x,y+28,L"    > Objects",RGB(190,199,211));
-        drawText(dc,x,y+56,L"    > Textures",RGB(190,199,211));
-        drawText(dc,x,y+84,L"    > Scripts",RGB(190,199,211));
-    }else{
-        drawText(dc,x,y,L"LOCATION SHORTCUTS",RGB(226,231,235));
-        drawText(dc,x,y+28,L"Home   |   Workshop   |   Favourites",RGB(190,199,211));
-    }
+void fill(HDC dc,RECT r,COLORREF color) {
+    HBRUSH brush=CreateSolidBrush(color);
+    FillRect(dc,&r,brush);DeleteObject(brush);
 }
-LRESULT CALLBACK procedure(HWND h,UINT message,WPARAM w,LPARAM l){
-    switch(message){
-    case WM_CREATE:{
-        windowHandle=h;
-        RECT r;GetClientRect(h,&r);
-        dividerX=r.right*2/3;dividerY=r.bottom/2;
-        for(int i=0;i<3;++i){
-            selectors[i]=CreateWindowExW(0,L"COMBOBOX",L"",
+void text(HDC dc,int x,int y,const wchar_t* str,COLORREF color) {
+    SetBkMode(dc,TRANSPARENT);SetTextColor(dc,color);
+    TextOutW(dc,x,y,str,lstrlenW(str));
+}
+void makeLayout(const LayoutNode* node,RECT bounds) {
+    if(!node->is_split) {
+        Pane* pane=nullptr;
+        for(auto& item:panes)if(item.id==node->area.id){pane=&item;break;}
+        if(!pane){
+            HWND control=CreateWindowExW(0,L"COMBOBOX",L"",
                 WS_CHILD|WS_VISIBLE|CBS_DROPDOWNLIST|WS_VSCROLL,
-                0,0,200,180,h,(HMENU)(INT_PTR)(200+i),GetModuleHandleW(nullptr),nullptr);
-            for(const auto* name:names)
-                SendMessageW(selectors[i],CB_ADDSTRING,0,(LPARAM)name);
-            SendMessageW(selectors[i],CB_SETCURSEL,i,0);
+                0,0,100,200,mainWindow,
+                reinterpret_cast<HMENU>(static_cast<INT_PTR>(ComboBase+nextCombo++)),
+                GetModuleHandleW(nullptr),nullptr);
+            for(auto* name:Names)SendMessageW(control,CB_ADDSTRING,0,reinterpret_cast<LPARAM>(name));
+            panes.push_back({node->area.id,bounds,control});
+            pane=&panes.back();
         }
-        arrange();return 0;
+        pane->box=bounds;
+        for(int i=0;i<4;++i)if(node->area.editor_type==Types[i])
+            SendMessageW(pane->selector,CB_SETCURSEL,i,0);
+        MoveWindow(pane->selector,bounds.left+6,bounds.top+5,
+            std::max(40,static_cast<int>(bounds.right-bounds.left)-12),200,TRUE);
+        return;
     }
-    case WM_SIZE:arrange();return 0;
+    RECT a=bounds,b=bounds,bar=bounds;
+    if(node->axis==SplitAxis::Horizontal) {
+        int width=static_cast<int>(bounds.right-bounds.left)-Gap;
+        int part=std::clamp(static_cast<int>(width*node->fraction),0,std::max(0,width));
+        a.right=bounds.left+part;
+        b.left=a.right+Gap;bar.left=a.right;bar.right=b.left;
+    }else{
+        int height=static_cast<int>(bounds.bottom-bounds.top)-Gap;
+        int part=std::clamp(static_cast<int>(height*node->fraction),0,std::max(0,height));
+        a.bottom=bounds.top+part;
+        b.top=a.bottom+Gap;bar.top=a.bottom;bar.bottom=b.top;
+    }
+    dividers.push_back({lastLeaf(node->first.get()),firstLeaf(node->second.get()),bar,bounds,node->axis});
+    makeLayout(node->first.get(),a);
+    makeLayout(node->second.get(),b);
+}
+void relayout(){
+    if(!mainWindow||!space)return;
+    RECT r;GetClientRect(mainWindow,&r);
+    r.left+=8;r.top+=8;r.right-=8;r.bottom-=8;
+    dividers.clear();
+    makeLayout(&space->root(),r);
+    for(auto it=panes.begin();it!=panes.end();){
+        if(!findArea(&space->root(),it->id)){
+            DestroyWindow(it->selector);it=panes.erase(it);
+        }else ++it;
+    }
+    InvalidateRect(mainWindow,nullptr,TRUE);
+}
+void drawPane(HDC dc,const Pane& pane,const robotdolly::Area& area){
+    RECT r=pane.box;if(r.right<=r.left||r.bottom<=r.top)return;
+    fill(dc,r,RGB(43,46,52));
+    RECT header=r;header.bottom=std::min(r.bottom,r.top+Header);
+    fill(dc,header,RGB(66,70,78));
+    int x=r.left+12,y=r.top+48;
+    if(area.editor_type=="sl.world"){
+        text(dc,x,y,L"SECOND LIFE WORLD",RGB(228,231,235));
+        text(dc,x,y+27,L"Live rendering will come later.",RGB(172,180,190));
+    }else if(area.editor_type=="sl.chat"){
+        text(dc,x,y,L"NEARBY / IM / GROUP CHAT",RGB(228,231,235));
+        text(dc,x,y+27,L"Conversation placeholder",RGB(172,180,190));
+    }else if(area.editor_type=="sl.inventory"){
+        text(dc,x,y,L"> My Inventory",RGB(228,231,235));
+        text(dc,x,y+27,L"  > Objects",RGB(172,180,190));
+        text(dc,x,y+54,L"  > Textures",RGB(172,180,190));
+    }else{
+        text(dc,x,y,L"LOCATION SHORTCUTS",RGB(228,231,235));
+        text(dc,x,y+27,L"Home | Workshop | Favourites",RGB(172,180,190));
+    }
+}
+LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
+    switch(msg){
+    case WM_CREATE:{
+        mainWindow=hwnd;
+        space=std::make_unique<robotdolly::Workspace>(registry);
+        auto world=space->root().area.id;
+        auto chat=space->split(world,SplitAxis::Horizontal,"sl.chat");
+        space->setEditor(chat,"sl.chat","nearby");
+        space->split(chat,SplitAxis::Vertical,"sl.inventory");
+        relayout();return 0;
+    }
+    case WM_SIZE:relayout();return 0;
     case WM_COMMAND:{
         if(HIWORD(w)==CBN_SELCHANGE){
-            for(int i=0;i<3;++i)if((HWND)l==selectors[i]){
-                int choice=(int)SendMessageW(selectors[i],CB_GETCURSEL,0,0);
-                if(choice>=0&&choice<4)modes[i]=choice;
-                InvalidateRect(h,nullptr,TRUE);
+            for(const auto& p:panes)if(p.selector==reinterpret_cast<HWND>(l)){
+                int i=static_cast<int>(SendMessageW(p.selector,CB_GETCURSEL,0,0));
+                if(i>=0&&i<4)space->setEditor(p.id,Types[i]);
+                InvalidateRect(hwnd,nullptr,FALSE);return 0;
             }
-        }return 0;
+        }
+        switch(LOWORD(w)){
+        case 4101:space->split(menuArea,SplitAxis::Horizontal,"sl.chat");relayout();return 0;
+        case 4102:space->split(menuArea,SplitAxis::Vertical,"sl.chat");relayout();return 0;
+        case 4103:space->closeArea(menuArea);relayout();return 0;
+        }
+        return 0;
+    }
+    case WM_CONTEXTMENU:{
+        POINT at={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+        if(at.x==-1&&at.y==-1){GetCursorPos(&at);}
+        POINT local=at;ScreenToClient(hwnd,&local);
+        for(const auto& p:panes)if(PtInRect(&p.box,local)){
+            menuArea=p.id;
+            HMENU menu=CreatePopupMenu();
+            AppendMenuW(menu,MF_STRING,4101,L"Split Left / Right");
+            AppendMenuW(menu,MF_STRING,4102,L"Split Top / Bottom");
+            AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+            AppendMenuW(menu,MF_STRING,4103,L"Join / Close This Area");
+            TrackPopupMenu(menu,TPM_LEFTALIGN|TPM_RIGHTBUTTON,at.x,at.y,0,hwnd,nullptr);
+            DestroyMenu(menu);
+            return 0;
+        }
+        return 0;
+    }
+    case WM_SETCURSOR:{
+        if(LOWORD(l)==HTCLIENT){
+            POINT p;GetCursorPos(&p);ScreenToClient(hwnd,&p);
+            for(const auto& d:dividers)if(PtInRect(&d.hit,p)){
+                SetCursor(LoadCursorW(nullptr,d.axis==SplitAxis::Horizontal?IDC_SIZEWE:IDC_SIZENS));
+                return TRUE;
+            }
+        }
+        break;
     }
     case WM_LBUTTONDOWN:{
-        int x=GET_X_LPARAM(l),y=GET_Y_LPARAM(l);
-        if(abs(x-dividerX)<8){movingX=true;SetCapture(h);}
-        else if(x>dividerX&&abs(y-dividerY)<8){movingY=true;SetCapture(h);}
-        return 0;
+        POINT p={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+        for(const auto& d:dividers)if(PtInRect(&d.hit,p)){
+            dragDivider=d;dragging=true;SetCapture(hwnd);return 0;
+        }
+        break;
     }
-    case WM_MOUSEMOVE:
-        if(movingX){dividerX=GET_X_LPARAM(l);arrange();}
-        if(movingY){dividerY=GET_Y_LPARAM(l);arrange();}
-        return 0;
+    case WM_MOUSEMOVE:{
+        if(dragging){
+            int origin=dragDivider.axis==SplitAxis::Horizontal?dragDivider.bounds.left:dragDivider.bounds.top;
+            int extent=dragDivider.axis==SplitAxis::Horizontal?
+                static_cast<int>(dragDivider.bounds.right-dragDivider.bounds.left):
+                static_cast<int>(dragDivider.bounds.bottom-dragDivider.bounds.top);
+            int mouse=dragDivider.axis==SplitAxis::Horizontal?GET_X_LPARAM(l):GET_Y_LPARAM(l);
+            if(extent>Gap)space->resizeBetween(dragDivider.left,dragDivider.right,
+                std::clamp(static_cast<float>(mouse-origin)/static_cast<float>(extent-Gap),0.1f,0.9f));
+            relayout();return 0;
+        }
+        break;
+    }
     case WM_LBUTTONUP:
-        movingX=false;movingY=false;ReleaseCapture();return 0;
+        if(dragging){dragging=false;ReleaseCapture();return 0;}break;
+    case WM_CAPTURECHANGED:dragging=false;return 0;
     case WM_PAINT:{
-        PAINTSTRUCT ps;HDC dc=BeginPaint(h,&ps);
-        RECT r;GetClientRect(h,&r);
-        HBRUSH background=CreateSolidBrush(RGB(26,28,33));
-        FillRect(dc,&r,background);DeleteObject(background);
-        for(int i=0;i<3;++i)paintArea(dc,area(i,r),modes[i]);
-        EndPaint(h,&ps);return 0;
+        PAINTSTRUCT ps;HDC dc=BeginPaint(hwnd,&ps);
+        RECT r;GetClientRect(hwnd,&r);fill(dc,r,RGB(26,28,32));
+        for(const auto& p:panes)if(auto* area=findArea(&space->root(),p.id))drawPane(dc,p,*area);
+        for(const auto& d:dividers)fill(dc,d.hit,RGB(12,13,16));
+        EndPaint(hwnd,&ps);return 0;
     }
     case WM_DESTROY:PostQuitMessage(0);return 0;
     }
-    return DefWindowProcW(h,message,w,l);
+    return DefWindowProcW(hwnd,msg,w,l);
 }
 }
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int show){
-    WNDCLASSW wc={};wc.lpfnWndProc=procedure;wc.hInstance=instance;
-    wc.lpszClassName=L"RobotDollyWorkspace";wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);
+    WNDCLASSW wc={};wc.lpfnWndProc=windowProc;wc.hInstance=instance;
+    wc.lpszClassName=L"RobotDollyWorkspaceV02";
+    wc.hCursor=LoadCursorW(nullptr,IDC_ARROW);
     if(!RegisterClassW(&wc))return 1;
-    HWND h=CreateWindowExW(0,wc.lpszClassName,L"ROBOT DOLLY - Workspace Preview",
-        WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1100,720,
+    HWND hwnd=CreateWindowExW(0,wc.lpszClassName,L"ROBOT DOLLY - Split Workspace v0.2",
+        WS_OVERLAPPEDWINDOW,CW_USEDEFAULT,CW_USEDEFAULT,1150,740,
         nullptr,nullptr,instance,nullptr);
-    if(!h)return 2;
-    ShowWindow(h,show);
-    MSG msg;while(GetMessageW(&msg,nullptr,0,0)>0){
-        TranslateMessage(&msg);DispatchMessageW(&msg);
+    if(!hwnd)return 2;
+    ShowWindow(hwnd,show);
+    MSG m;while(GetMessageW(&m,nullptr,0,0)>0){
+        TranslateMessage(&m);DispatchMessageW(&m);
     }
-    return (int)msg.wParam;
+    return static_cast<int>(m.wParam);
 }
