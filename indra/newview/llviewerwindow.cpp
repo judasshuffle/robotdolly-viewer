@@ -2998,6 +2998,19 @@ void LLViewerWindow::drawDebugText()
 
 void LLViewerWindow::draw()
 {
+    // ROBOT DOLLY: constrain the original toolbar layout to WORLD VIEW.
+    // Camera viewport changes alone do not resize these ordinary LLUI views.
+    // Use reshape to propagate width changes to toolbar child layouts.
+    if (sRobotDollyWorkspace && gToolBarView)
+    {
+        const S32 world_width = sRobotDollyWorkspace->worldRect().getWidth();
+        const LLRect toolbar_rect = gToolBarView->getRect();
+        if (world_width > 0 && toolbar_rect.getWidth() != world_width)
+        {
+            gToolBarView->reshape(world_width, toolbar_rect.getHeight());
+        }
+    }
+
     // ROBOT DOLLY experimental dock: parent existing Conversations under workspace.
     if (sRobotDollyWorkspace)
     {
