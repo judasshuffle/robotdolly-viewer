@@ -2229,7 +2229,7 @@ class RobotDollyWorkspaceView : public LLView
 {
 public:
     explicit RobotDollyWorkspaceView(const LLView::Params& params)
-        : LLView(params), mDivider(850), mDragging(false), mEditorMode(0), mWorldOnLeft(true) {}
+        : LLView(params), mDivider(850), mDragging(false), mEditorMode(0), mWorldOnLeft(true), mChooserOpen(false) {}
 
     // Scale the split when the viewer window itself changes size.
     // LLView's FOLLOWS_ALL changes our bounds, but mDivider was fixed in pixels.
@@ -2308,21 +2308,30 @@ public:
         }
         LLView::draw();
         const S32 editor_x = mWorldOnLeft ? divider + 6 : 6;
-        gl_rect_2d(LLRect(editor_x, top - 34, editor_x + 278, top - 5),
+        gl_rect_2d(LLRect(editor_x, top - 34, editor_x + 177, top - 5),
                    LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
-        // Three independently clickable editor choices.
-        font->renderUTF8(mEditorMode == 0 ? "[CHAT]" : "CHAT", 0,
-                         editor_x + 10, top - 11,
+        const char* editor_name = mEditorMode == 0 ? "CHAT" :
+                                  mEditorMode == 1 ? "INVENTORY" : "EMPTY";
+        font->renderUTF8(editor_name, 0, editor_x + 12, top - 11,
                          LLColor4(1.f, 0.9f, 0.35f, 1.f),
                          LLFontGL::LEFT, LLFontGL::TOP);
-        font->renderUTF8(mEditorMode == 2 ? "[EMPTY]" : "EMPTY", 0,
-                         editor_x + 104, top - 11,
+        font->renderUTF8("v", 0, editor_x + 157, top - 11,
                          LLColor4(1.f, 0.9f, 0.35f, 1.f),
                          LLFontGL::LEFT, LLFontGL::TOP);
-        font->renderUTF8(mEditorMode == 1 ? "[INV]" : "INV", 0,
-                         editor_x + 200, top - 11,
-                         LLColor4(1.f, 0.9f, 0.35f, 1.f),
-                         LLFontGL::LEFT, LLFontGL::TOP);
+        if (mChooserOpen)
+        {
+            const char* choices[] = { "CHAT", "INVENTORY", "EMPTY" };
+            for (S32 i = 0; i < 3; ++i)
+            {
+                const S32 row_top = top - 36 - i * 28;
+                gl_rect_2d(LLRect(editor_x, row_top, editor_x + 177, row_top - 28),
+                           i == mEditorMode ? LLColor4(0.25f, 0.30f, 0.37f, 1.f)
+                                            : LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
+                font->renderUTF8(choices[i], 0, editor_x + 12, row_top - 6,
+                                 LLColor4(1.f, 0.9f, 0.35f, 1.f),
+                                 LLFontGL::LEFT, LLFontGL::TOP);
+            }
+        }
         // This is a transitional swap control; universal per-area selectors
         // will replace it when the split-tree workspace is integrated.
         const S32 swap_x = mWorldOnLeft ? 235 : divider + 235;
@@ -2344,18 +2353,28 @@ public:
             return true;
         }
         const S32 editor_x = mWorldOnLeft ? mDivider + 6 : 6;
-        if (x >= editor_x && x <= editor_x + 278 &&
-            y <= top - 5 && y >= top - 34)
+        if (mChooserOpen && x >= editor_x && x <= editor_x + 177 &&
+            y <= top - 36 && y >= top - 120)
         {
-            const S32 next_mode = x < editor_x + 94 ? 0 :
-                                  x < editor_x + 194 ? 2 : 1;
-            mEditorMode = next_mode;
-            if (LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance())
-                if (chat->getParent() == this) chat->setVisible(mEditorMode == 0);
-            if (LLFloater* inventory = LLFloaterReg::findInstance("inventory"))
-                if (inventory->getParent() == this) inventory->setVisible(mEditorMode == 1);
+            const S32 choice = (top - 36 - y) / 28;
+            if (choice >= 0 && choice < 3)
+            {
+                mEditorMode = choice == 2 ? 2 : choice;
+                if (LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance())
+                    if (chat->getParent() == this) chat->setVisible(mEditorMode == 0);
+                if (LLFloater* inventory = LLFloaterReg::findInstance("inventory"))
+                    if (inventory->getParent() == this) inventory->setVisible(mEditorMode == 1);
+            }
+            mChooserOpen = false;
             return true;
         }
+        if (x >= editor_x && x <= editor_x + 177 &&
+            y <= top - 5 && y >= top - 34)
+        {
+            mChooserOpen = !mChooserOpen;
+            return true;
+        }
+        if (mChooserOpen) mChooserOpen = false;
         if (x >= mDivider - 10 && x <= mDivider + 10)
         {
             mDragging = true;
@@ -2392,6 +2411,7 @@ private:
     bool mDragging;
     S32 mEditorMode;
     bool mWorldOnLeft;
+    bool mChooserOpen;
 };
 
 static RobotDollyWorkspaceView* sRobotDollyWorkspace = nullptr;
