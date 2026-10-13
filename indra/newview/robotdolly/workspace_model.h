@@ -14,6 +14,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <istream>
+#include <ostream>
+#include <iomanip>
+#include <cmath>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -83,6 +87,18 @@ public:
     }
 
     const LayoutNode& root() const { return *mRoot; }
+    void save(std::ostream& out) const {
+        out << "RD_WORKSPACE 1\n";
+        saveNode(out, *mRoot);
+    }
+    bool load(std::istream& in) {
+        std::string magic; int version=0;
+        if (!(in >> magic >> version) || magic != "RD_WORKSPACE" || version != 1) return false;
+        AreaId high=0; std::unordered_set<AreaId> ids;
+        auto next=loadNode(in,0,high,ids);
+        if (!next || ids.empty()) return false;
+        mRoot=std::move(next); mNextAreaId=high+1; return true;
+    }
 
     // Returns the new area's identifier, or zero if the split is invalid.
     AreaId split(AreaId existing_id, SplitAxis axis, const std::string& new_editor)
@@ -146,6 +162,39 @@ public:
     }
 
 private:
+    static void saveNode(std::ostream& out,const LayoutNode& n) {
+        if (!n.is_split) {
+            out << "A " << n.area.id << ' ' << std::quoted(n.area.editor_type)
+                << ' ' << std::quoted(n.area.context_key) << '\n';
+        } else {
+            out << "S " << (n.axis==SplitAxis::Horizontal?'H':'V') << ' ' << n.fraction << '\n';
+            saveNode(out,*n.first); saveNode(out,*n.second);
+        }
+    }
+    std::unique_ptr<LayoutNode> loadNode(std::istream& in,int depth,
+                          AreaId& high,std::unordered_set<AreaId>& ids) const {
+        if(depth>64 || ids.size()>1024) return nullptr;
+        char kind=0; if(!(in>>kind))return nullptr;
+        auto n=std::make_unique<LayoutNode>();
+        if(kind=='A') {
+            if(!(in>>n->area.id>>std::quoted(n->area.editor_type)
+                   >>std::quoted(n->area.context_key))) return nullptr;
+            if(!n->area.id || !ids.insert(n->area.id).second) return nullptr;
+            if(!mRegistry.find(n->area.editor_type))n->area.editor_type="sl.world";
+            high=std::max(high,n->area.id);return n;
+        }
+        if(kind!='S')return nullptr;
+        char axis=0;if(!(in>>axis>>n->fraction))return nullptr;
+        if((axis!='H'&&axis!='V') || !std::isfinite(n->fraction) ||
+           n->fraction<0.1f || n->fraction>0.9f)return nullptr;
+        n->is_split=true;
+        n->axis=axis=='H'?SplitAxis::Horizontal:SplitAxis::Vertical;
+        n->first=loadNode(in,depth+1,high,ids);
+        if(!n->first)return nullptr;
+        n->second=loadNode(in,depth+1,high,ids);
+        if(!n->second)return nullptr;
+        return n;
+    }
     static LayoutNode* findNode(LayoutNode* node, AreaId id)
     {
         if (!node)
