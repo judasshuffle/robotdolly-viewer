@@ -2423,16 +2423,35 @@ public:
                 }
             }
             if (mOpenNode == i)
-                for (S32 choice = 0; choice < 4; ++choice)
+            {
+                // Two-level editor menu: short categories first, real editor
+                // choices second. Only implemented editors are selectable.
+                const char* categories[] = { "FAVOURITES >", "WORLD & BUILD >", "COMMUNICATION >", "INVENTORY >", "OTHER >" };
+                const S32 favouriteEditors[] = { WORLD, CHAT, INVENTORY };
+                const S32 categoryEditors[] = { WORLD, WORLD, CHAT, INVENTORY, EMPTY };
+                const S32 count = mEditorCategory < 0 ? 5 :
+                    mEditorCategory == 0 ? 4 : 2; // Back plus 1-3 entries
+                for (S32 row = 0; row < count; ++row)
                 {
-                    const S32 y = top - 36 - choice * 28;
+                    const S32 y = top - 36 - row * 28;
+                    const char* label = "";
+                    S32 choice = -1;
+                    if (mEditorCategory < 0) label = categories[row];
+                    else if (row == 0) label = "< BACK";
+                    else
+                    {
+                        choice = mEditorCategory == 0
+                            ? favouriteEditors[row - 1] : categoryEditors[mEditorCategory];
+                        label = names[choice];
+                    }
                     gl_rect_2d(LLRect(x, y, x + 172, y - 28),
                                choice == mNodes[i].editor
-                                ? LLColor4(0.25f, 0.30f, 0.37f, 1.f)
-                                : LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
-                    font->renderUTF8(names[choice], 0, x + 10, y - 6,
+                                   ? LLColor4(0.25f, 0.30f, 0.37f, 1.f)
+                                   : LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
+                    font->renderUTF8(label, 0, x + 9, y - 6,
                            LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
                 }
+            }
         }
     }
 
@@ -2442,13 +2461,28 @@ public:
         {
             const LLRect r = nodeRect(mOpenNode);
             const S32 xx = r.mLeft + 6;
-            if (x >= xx && x <= xx + 172 && y <= r.mTop - 36 && y >= r.mTop - 148)
+            const S32 count = mEditorCategory < 0 ? 5 : mEditorCategory == 0 ? 4 : 2;
+            if (x >= xx && x <= xx + 172 &&
+                y <= r.mTop - 36 && y >= r.mTop - 36 - count * 28)
             {
-                const S32 choice = (r.mTop - 36 - y) / 28;
-                const S32 id = mOpenNode;
-                mOpenNode = -1;
-                chooseEditor(id, choice);
-                return true;
+                const S32 row = (r.mTop - 36 - y) / 28;
+                if (row >= 0 && row < count)
+                {
+                    if (mEditorCategory < 0) mEditorCategory = row;
+                    else if (row == 0) mEditorCategory = -1;
+                    else
+                    {
+                        const S32 favouriteEditors[] = { WORLD, CHAT, INVENTORY };
+                        const S32 categoryEditors[] = { WORLD, WORLD, CHAT, INVENTORY, EMPTY };
+                        const S32 choice = mEditorCategory == 0
+                            ? favouriteEditors[row - 1] : categoryEditors[mEditorCategory];
+                        const S32 id = mOpenNode;
+                        mOpenNode = -1;
+                        mEditorCategory = -1;
+                        chooseEditor(id, choice);
+                    }
+                    return true;
+                }
             }
         }
         if (mOpenArea >= 0)
@@ -2482,6 +2516,7 @@ public:
                 {
                     mOpenArea = -1;
                     mOpenNode = previous_editor_menu == i ? -1 : i;
+                    mEditorCategory = -1;
                     return true;
                 }
                 const S32 ax = xx + 177;
@@ -2545,6 +2580,7 @@ public:
 private:
     Node mNodes[63];
     S32 mOpenNode = -1;
+    S32 mEditorCategory = -1;
     S32 mOpenArea = -1;
     S32 mDragNode = -1;
 };
