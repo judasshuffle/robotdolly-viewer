@@ -2399,17 +2399,28 @@ public:
                        LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
             font->renderUTF8("v", 0, x + 153, top - 11,
                        LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
-            // A second compact toolbar row makes ALL three actions visible
-            // even in narrow panes (instead of clipping controls to the right).
-            const char* actions[] = { "SPLIT H", "SPLIT V", "JOIN" };
-            const S32 action_width = llmax(1, llmin(72, (r.getWidth() - 12) / 3));
-            for (S32 j = 0; j < 3; ++j)
+            // Compact AREA menu beside the editor chooser.
+            const S32 ax = x + 177;
+            if (ax + 80 <= r.mRight - 3)
             {
-                const S32 bx = x + j * action_width;
-                gl_rect_2d(LLRect(bx, top - 37, bx + action_width - 2, top - 63),
+                gl_rect_2d(LLRect(ax, top - 34, ax + 80, top - 5),
                            LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
-                font->renderUTF8(actions[j], 0, bx + 3, top - 42,
-                           LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
+                font->renderUTF8("AREA v", 0, ax + 7, top - 11,
+                                 LLColor4(1.f, 0.9f, 0.35f, 1.f),
+                                 LLFontGL::LEFT, LLFontGL::TOP);
+            }
+            if (mOpenArea == i)
+            {
+                const char* actions[] = { "SPLIT H", "SPLIT V", "JOIN" };
+                for (S32 j = 0; j < 3; ++j)
+                {
+                    const S32 y = top - 36 - j * 28;
+                    gl_rect_2d(LLRect(ax, y, ax + 110, y - 28),
+                               LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
+                    font->renderUTF8(actions[j], 0, ax + 7, y - 6,
+                                     LLColor4(1.f, 0.9f, 0.35f, 1.f),
+                                     LLFontGL::LEFT, LLFontGL::TOP);
+                }
             }
             if (mOpenNode == i)
                 for (S32 choice = 0; choice < 4; ++choice)
@@ -2440,7 +2451,24 @@ public:
                 return true;
             }
         }
+        if (mOpenArea >= 0)
+        {
+            const LLRect r = nodeRect(mOpenArea);
+            const S32 ax = r.mLeft + 183;
+            if (x >= ax && x <= ax + 110 &&
+                y <= r.mTop - 36 && y >= r.mTop - 120)
+            {
+                const S32 action = (r.mTop - 36 - y) / 28;
+                const S32 id = mOpenArea;
+                mOpenArea = -1;
+                if (action == 0) splitArea(id, false);
+                if (action == 1) splitArea(id, true);
+                if (action == 2) joinArea(id);
+                return true;
+            }
+        }
         mOpenNode = -1;
+        mOpenArea = -1;
         for (S32 i = 0; i < 63; ++i)
         {
             if (!mNodes[i].used || mNodes[i].split) continue;
@@ -2448,21 +2476,18 @@ public:
             const S32 xx = r.mLeft + 6;
             if (y <= r.mTop - 5 && y >= r.mTop - 34)
             {
-                if (x >= xx && x <= xx + 172) { mOpenNode = i; return true; }
-            }
-            if (y <= r.mTop - 37 && y >= r.mTop - 63)
-            {
-                const S32 action_width = llmax(1, llmin(72, (r.getWidth() - 12) / 3));
-                for (S32 j = 0; j < 3; ++j)
+                if (x >= xx && x <= xx + 172)
                 {
-                    const S32 bx = xx + j * action_width;
-                    if (x >= bx && x <= bx + action_width - 2)
-                    {
-                        if (j == 0) splitArea(i, false); // upper/lower
-                        if (j == 1) splitArea(i, true);  // left/right
-                        if (j == 2) joinArea(i);
-                        return true;
-                    }
+                    mOpenArea = -1;
+                    mOpenNode = mOpenNode == i ? -1 : i;
+                    return true;
+                }
+                const S32 ax = xx + 177;
+                if (ax + 80 <= r.mRight - 3 && x >= ax && x <= ax + 80)
+                {
+                    mOpenNode = -1;
+                    mOpenArea = mOpenArea == i ? -1 : i;
+                    return true;
                 }
             }
         }
@@ -2518,6 +2543,7 @@ public:
 private:
     Node mNodes[63];
     S32 mOpenNode = -1;
+    S32 mOpenArea = -1;
     S32 mDragNode = -1;
 };
 
