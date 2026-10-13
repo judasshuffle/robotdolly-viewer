@@ -245,6 +245,8 @@ class ViewerManifest(LLManifest):
         return suffix
 
     def installer_base_name(self):
+        if self.channel().startswith("ROBOTDOLLY Viewer"):
+            return "ROBOTDOLLY_Viewer_v1_" + self.args['arch']
         global CHANNEL_VENDOR_BASE
         # a standard map of strings for replacing in the templates
         substitution_strings = {
@@ -266,6 +268,8 @@ class ViewerManifest(LLManifest):
         return "%(channel_vendor_base)s%(channel_variant_underscores)s_%(version_underscores)s_universal" % substitution_strings
 
     def app_name(self):
+        if self.channel().startswith("ROBOTDOLLY Viewer"):
+            return "ROBOTDOLLY Viewer v1"
         global CHANNEL_VENDOR_BASE
         channel_type=self.channel_type()
         if channel_type == 'release':
