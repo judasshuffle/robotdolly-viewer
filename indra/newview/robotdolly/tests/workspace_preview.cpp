@@ -30,12 +30,12 @@ RECT area(int n,RECT client) {
 void arrange() {
     if(!windowHandle)return;
     RECT r;GetClientRect(windowHandle,&r);
-    dividerX=std::clamp(dividerX,140,std::max(141,r.right-140));
-    dividerY=std::clamp(dividerY,110,std::max(111,r.bottom-110));
+    dividerX=std::clamp(dividerX,140,std::max(141,static_cast<int>(r.right)-140));
+    dividerY=std::clamp(dividerY,110,std::max(111,static_cast<int>(r.bottom)-110));
     for(int i=0;i<3;++i) if(selectors[i]){
         RECT a=area(i,r);
         MoveWindow(selectors[i],a.left+7,a.top+4,
-            std::max(100,a.right-a.left-14),180,TRUE);
+            std::max(100,static_cast<int>(a.right-a.left)-14),180,TRUE);
     }
     InvalidateRect(windowHandle,nullptr,TRUE);
 }
