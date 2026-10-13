@@ -2917,6 +2917,15 @@ void LLViewerWindow::draw()
             LLFontGL::LEFT, LLFontGL::TOP);
     }
 
+    // ROBOT DOLLY: first visible integration marker, no renderer changes.
+    {
+        const LLFontGL* rd_font = LLFontGL::getFontSansSerif();
+        rd_font->renderUTF8("ROBOT DOLLY - workspace test", 0,
+            16, ll_round(getWindowHeightScaled() - 86.f),
+            LLColor4(1.f, 0.9f, 0.35f, 1.f),
+            LLFontGL::LEFT, LLFontGL::TOP);
+    }
+
     gGL.pushMatrix();
     LLUI::pushMatrix();
     {
