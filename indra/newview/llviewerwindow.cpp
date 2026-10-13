@@ -2339,6 +2339,17 @@ void LLViewerWindow::initBase()
 
     gMenuHolder = getRootView()->getChild<LLViewerMenuHolderGL>("Menu Holder");
     LLMenuGL::sMenuContainer = gMenuHolder;
+
+    // ROBOT DOLLY: install the experimental split workspace in the real UI tree.
+    // Only the divider accepts input; all other clicks pass through to the viewer.
+    LLView::Params rdp;
+    rdp.name("robot_dolly_workspace");
+    rdp.rect(LLRect(16, getWindowHeightScaled() - 86, 476,
+                    getWindowHeightScaled() - 196));
+    rdp.mouse_opaque(false);
+    rdp.follows.flags(FOLLOWS_LEFT | FOLLOWS_TOP);
+    getRootView()->addChild(new RobotDollyWorkspaceView(rdp));
+
 }
 
 void LLViewerWindow::initWorldUI()
@@ -2871,6 +2882,74 @@ void LLViewerWindow::drawDebugText()
     gUIProgram.unbind();
 }
 
+// First ROBOT DOLLY LLUI host: an actual mouse-aware view, not a painted overlay.
+// The areas are placeholders; the existing world renderer is unchanged.
+class RobotDollyWorkspaceView : public LLView
+{
+public:
+    explicit RobotDollyWorkspaceView(const LLView::Params& params)
+        : LLView(params), mDivider(280), mDragging(false) {}
+
+    void draw() override
+    {
+        const LLRect area = getLocalRect();
+        const S32 top = area.mTop;
+        const S32 bottom = area.mBottom;
+        const S32 divider = mDivider;
+        const LLColor4 border(0.65f, 0.70f, 0.77f, 1.f);
+        gl_rect_2d(area, LLColor4(0.055f, 0.07f, 0.09f, 0.86f), true);
+        gl_rect_2d(area, border, false);
+        gl_rect_2d(LLRect(divider - 2, top, divider + 2, bottom), border, true);
+        const LLFontGL* font = LLFontGL::getFontSansSerif();
+        font->renderUTF8("ROBOT DOLLY | WORKSPACE", 0, 10, top - 9,
+            LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
+        font->renderUTF8("WORLD VIEW", 0, 10, top - 44,
+            LLColor4(1.f, 1.f, 1.f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
+        font->renderUTF8("CHAT", 0, divider + 12, top - 44,
+            LLColor4(1.f, 1.f, 1.f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
+        font->renderUTF8("Drag divider", 0, divider + 12, top - 68,
+            border, LLFontGL::LEFT, LLFontGL::TOP);
+        LLView::draw();
+    }
+
+    bool handleMouseDown(S32 x, S32 y, MASK mask) override
+    {
+        if (x >= mDivider - 10 && x <= mDivider + 10)
+        {
+            mDragging = true;
+            gFocusMgr.setMouseCapture(this);
+            return true;
+        }
+        return false;
+    }
+
+    bool handleHover(S32 x, S32 y, MASK mask) override
+    {
+        if (mDragging)
+        {
+            mDivider = llclamp(x, 110, getRect().getWidth() - 100);
+            return true;
+        }
+        return false;
+    }
+
+    bool handleMouseUp(S32 x, S32 y, MASK mask) override
+    {
+        if (mDragging)
+        {
+            mDivider = llclamp(x, 110, getRect().getWidth() - 100);
+            mDragging = false;
+            gFocusMgr.setMouseCapture(nullptr);
+            return true;
+        }
+        return false;
+    }
+
+private:
+    S32 mDivider;
+    bool mDragging;
+};
+
 void LLViewerWindow::draw()
 {
 
@@ -2917,32 +2996,6 @@ void LLViewerWindow::draw()
             LLFontGL::LEFT, LLFontGL::TOP);
     }
 
-    // ROBOT DOLLY: non-interactive two-area workspace overlay.
-    // Renderer, mouse input and camera remain untouched.
-    {
-        const S32 left = 16;
-        const S32 top = getWindowHeightScaled() - 86;
-        const S32 split = left + 280;
-        const S32 bottom = top - 110;
-        const LLColor4 border(0.65f, 0.70f, 0.77f, 1.f);
-        gl_rect_2d(LLRect(left, top, left + 460, bottom),
-                   LLColor4(0.055f, 0.07f, 0.09f, 0.86f), true);
-        gl_rect_2d(LLRect(left, top, left + 460, bottom), border, false);
-        gl_rect_2d(LLRect(split, top, split + 1, bottom), border, true);
-        const LLFontGL* font = LLFontGL::getFontSansSerif();
-        font->renderUTF8("ROBOT DOLLY  |  WORKSPACE", 0,
-            left + 10, top - 9, LLColor4(1.f, 0.9f, 0.35f, 1.f),
-            LLFontGL::LEFT, LLFontGL::TOP);
-        font->renderUTF8("WORLD VIEW  [placeholder]", 0,
-            left + 10, top - 44, LLColor4(1.f, 1.f, 1.f, 1.f),
-            LLFontGL::LEFT, LLFontGL::TOP);
-        font->renderUTF8("CHAT", 0,
-            split + 12, top - 44, LLColor4(1.f, 1.f, 1.f, 1.f),
-            LLFontGL::LEFT, LLFontGL::TOP);
-        font->renderUTF8("Placeholder", 0,
-            split + 12, top - 68, border,
-            LLFontGL::LEFT, LLFontGL::TOP);
-    }
 
     gGL.pushMatrix();
     LLUI::pushMatrix();
