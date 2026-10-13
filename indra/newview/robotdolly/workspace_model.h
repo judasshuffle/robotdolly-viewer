@@ -130,6 +130,15 @@ public:
         return true;
     }
 
+    // Resize the split separating two different descendant areas.
+    bool resizeBetween(AreaId first_id, AreaId second_id, float fraction)
+    {
+        LayoutNode* split_node = findSeparatingSplit(mRoot.get(), first_id, second_id);
+        if (!split_node) return false;
+        split_node->fraction = std::clamp(fraction, 0.1f, 0.9f);
+        return true;
+    }
+
     bool closeArea(AreaId id)
     {
         // Collapse the parent split, retaining its sibling.
@@ -154,6 +163,15 @@ private:
         if (!node->is_split) return node->area.id == id;
         return containsLeaf(node->first.get(), id) ||
                containsLeaf(node->second.get(), id);
+    }
+
+    static LayoutNode* findSeparatingSplit(LayoutNode* node, AreaId a, AreaId b)
+    {
+        if (!node || !node->is_split) return nullptr;
+        if (containsLeaf(node->first.get(), a) && containsLeaf(node->second.get(), b))
+            return node;
+        if (auto* found = findSeparatingSplit(node->first.get(), a, b)) return found;
+        return findSeparatingSplit(node->second.get(), a, b);
     }
 
     static LayoutNode* findParent(LayoutNode* node, AreaId id)
