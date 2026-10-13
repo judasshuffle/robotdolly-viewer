@@ -2997,6 +2997,20 @@ void LLViewerWindow::draw()
     }
 
 
+    // ROBOT DOLLY diagnostic: report the real viewport and window dimensions.
+    // This helps distinguish viewport resizing from an unchanged UI overlay.
+    {
+        const std::string rd_view_size = "RD 3D viewport: " +
+            std::to_string(mWorldViewRectRaw.getWidth()) + " x " +
+            std::to_string(mWorldViewRectRaw.getHeight()) +
+            " / window: " + std::to_string(mWindowRectRaw.getWidth()) +
+            " x " + std::to_string(mWindowRectRaw.getHeight());
+        LLFontGL::getFontSansSerif()->renderUTF8(rd_view_size, 0,
+            18, ll_round(getWindowHeightScaled() - 210.f),
+            LLColor4(1.f, 0.9f, 0.35f, 1.f),
+            LLFontGL::LEFT, LLFontGL::TOP);
+    }
+
     gGL.pushMatrix();
     LLUI::pushMatrix();
     {
