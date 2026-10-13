@@ -2229,7 +2229,7 @@ class RobotDollyWorkspaceView : public LLView
 {
 public:
     explicit RobotDollyWorkspaceView(const LLView::Params& params)
-        : LLView(params), mDivider(850), mDragging(false) {}
+        : LLView(params), mDivider(850), mDragging(false), mShowChat(true) {}
 
     LLRect worldRect() const
     {
@@ -2264,11 +2264,33 @@ public:
             LLColor4(1.f, 1.f, 1.f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
         font->renderUTF8("Drag divider", 0, divider + 12, top - 68,
             border, LLFontGL::LEFT, LLFontGL::TOP);
+        if (!mShowChat)
+        {
+            gl_rect_2d(LLRect(divider + 3, top, area.mRight, bottom),
+                       LLColor4(0.055f, 0.07f, 0.09f, 1.f), true);
+            font->renderUTF8("EMPTY EDITOR AREA", 0, divider + 20, top - 65,
+                border, LLFontGL::LEFT, LLFontGL::TOP);
+        }
         LLView::draw();
+        gl_rect_2d(LLRect(divider + 6, top - 34, divider + 188, top - 5),
+                   LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
+        font->renderUTF8(mShowChat ? "[CHAT]  EMPTY" : "CHAT  [EMPTY]",
+                         0, divider + 16, top - 11,
+                         LLColor4(1.f, 0.9f, 0.35f, 1.f),
+                         LLFontGL::LEFT, LLFontGL::TOP);
     }
 
     bool handleMouseDown(S32 x, S32 y, MASK mask) override
     {
+        const S32 top = getLocalRect().mTop;
+        if (x >= mDivider + 6 && x <= mDivider + 188 &&
+            y <= top - 5 && y >= top - 34)
+        {
+            mShowChat = x < mDivider + 100;
+            if (LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance())
+                if (chat->getParent() == this) chat->setVisible(mShowChat);
+            return true;
+        }
         if (x >= mDivider - 10 && x <= mDivider + 10)
         {
             mDragging = true;
@@ -2303,6 +2325,7 @@ public:
 private:
     S32 mDivider;
     bool mDragging;
+    bool mShowChat;
 };
 
 static RobotDollyWorkspaceView* sRobotDollyWorkspace = nullptr;
