@@ -2274,8 +2274,13 @@ public:
         LLView::draw();
         gl_rect_2d(LLRect(divider + 6, top - 34, divider + 188, top - 5),
                    LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
-        font->renderUTF8(mShowChat ? "[CHAT]  EMPTY" : "CHAT  [EMPTY]",
-                         0, divider + 16, top - 11,
+        // Match the labels to their independent click regions.
+        font->renderUTF8(mShowChat ? "[CHAT]" : "CHAT", 0,
+                         divider + 16, top - 11,
+                         LLColor4(1.f, 0.9f, 0.35f, 1.f),
+                         LLFontGL::LEFT, LLFontGL::TOP);
+        font->renderUTF8(mShowChat ? "EMPTY" : "[EMPTY]", 0,
+                         divider + 110, top - 11,
                          LLColor4(1.f, 0.9f, 0.35f, 1.f),
                          LLFontGL::LEFT, LLFontGL::TOP);
     }
