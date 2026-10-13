@@ -8,6 +8,7 @@
 #include <windowsx.h>
 #include <algorithm>
 #include <memory>
+#include <fstream>
 #include <vector>
 #include "../workspace_model.h"
 #pragma comment(lib,"user32.lib")
@@ -144,10 +145,13 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
     case WM_CREATE:{
         mainWindow=hwnd;
         space=std::make_unique<robotdolly::Workspace>(registry);
-        auto world=space->root().area.id;
-        auto chat=space->split(world,SplitAxis::Horizontal,"sl.chat");
-        space->setEditor(chat,"sl.chat","nearby");
-        space->split(chat,SplitAxis::Vertical,"sl.inventory");
+        std::ifstream saved("robotdolly-workspace.layout");
+        if(!saved || !space->load(saved)) {
+            auto world=space->root().area.id;
+            auto chat=space->split(world,SplitAxis::Horizontal,"sl.chat");
+            space->setEditor(chat,"sl.chat","nearby");
+            space->split(chat,SplitAxis::Vertical,"sl.inventory");
+        }
         relayout();return 0;
     }
     case WM_SIZE:relayout();return 0;
@@ -254,7 +258,13 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
         for(const auto& d:dividers)fill(dc,d.hit,RGB(12,13,16));
         EndPaint(hwnd,&ps);return 0;
     }
-    case WM_DESTROY:PostQuitMessage(0);return 0;
+    case WM_DESTROY:{
+        if(space) {
+            std::ofstream out("robotdolly-workspace.layout",std::ios::trunc);
+            if(out)space->save(out);
+        }
+        PostQuitMessage(0);return 0;
+    }
     }
     return DefWindowProcW(hwnd,msg,w,l);
 }
