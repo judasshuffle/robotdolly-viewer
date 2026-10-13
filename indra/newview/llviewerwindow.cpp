@@ -2229,7 +2229,7 @@ class RobotDollyWorkspaceView : public LLView
 {
 public:
     explicit RobotDollyWorkspaceView(const LLView::Params& params)
-        : LLView(params), mDivider(850), mDragging(false), mShowChat(true), mWorldOnLeft(true) {}
+        : LLView(params), mDivider(850), mDragging(false), mEditorMode(0), mWorldOnLeft(true) {}
 
     // Scale the split when the viewer window itself changes size.
     // LLView's FOLLOWS_ALL changes our bounds, but mDivider was fixed in pixels.
@@ -2263,6 +2263,7 @@ public:
                      on_screen.mRight, on_screen.mBottom);
     }
     bool worldOnLeft() const { return mWorldOnLeft; }
+    S32 editorMode() const { return mEditorMode; }
     S32 divider() const { return mDivider; }
     LLRect chatRect() const
     {
@@ -2296,7 +2297,7 @@ public:
             LLColor4(1.f, 1.f, 1.f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
         font->renderUTF8("Drag divider", 0, chat_label_x, top - 68,
             border, LLFontGL::LEFT, LLFontGL::TOP);
-        if (!mShowChat)
+        if (mEditorMode == 2)
         {
             gl_rect_2d(mWorldOnLeft
                            ? LLRect(divider + 3, top, area.mRight, bottom)
@@ -2307,15 +2308,19 @@ public:
         }
         LLView::draw();
         const S32 editor_x = mWorldOnLeft ? divider + 6 : 6;
-        gl_rect_2d(LLRect(editor_x, top - 34, editor_x + 182, top - 5),
+        gl_rect_2d(LLRect(editor_x, top - 34, editor_x + 278, top - 5),
                    LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
-        // Match the labels to their independent click regions.
-        font->renderUTF8(mShowChat ? "[CHAT]" : "CHAT", 0,
+        // Three independently clickable editor choices.
+        font->renderUTF8(mEditorMode == 0 ? "[CHAT]" : "CHAT", 0,
                          editor_x + 10, top - 11,
                          LLColor4(1.f, 0.9f, 0.35f, 1.f),
                          LLFontGL::LEFT, LLFontGL::TOP);
-        font->renderUTF8(mShowChat ? "EMPTY" : "[EMPTY]", 0,
+        font->renderUTF8(mEditorMode == 2 ? "[EMPTY]" : "EMPTY", 0,
                          editor_x + 104, top - 11,
+                         LLColor4(1.f, 0.9f, 0.35f, 1.f),
+                         LLFontGL::LEFT, LLFontGL::TOP);
+        font->renderUTF8(mEditorMode == 1 ? "[INV]" : "INV", 0,
+                         editor_x + 200, top - 11,
                          LLColor4(1.f, 0.9f, 0.35f, 1.f),
                          LLFontGL::LEFT, LLFontGL::TOP);
         // This is a transitional swap control; universal per-area selectors
@@ -2339,12 +2344,16 @@ public:
             return true;
         }
         const S32 editor_x = mWorldOnLeft ? mDivider + 6 : 6;
-        if (x >= editor_x && x <= editor_x + 182 &&
+        if (x >= editor_x && x <= editor_x + 278 &&
             y <= top - 5 && y >= top - 34)
         {
-            mShowChat = x < editor_x + 94;
+            const S32 next_mode = x < editor_x + 94 ? 0 :
+                                  x < editor_x + 194 ? 2 : 1;
+            mEditorMode = next_mode;
             if (LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance())
-                if (chat->getParent() == this) chat->setVisible(mShowChat);
+                if (chat->getParent() == this) chat->setVisible(mEditorMode == 0);
+            if (LLFloater* inventory = LLFloaterReg::findInstance("inventory"))
+                if (inventory->getParent() == this) inventory->setVisible(mEditorMode == 1);
             return true;
         }
         if (x >= mDivider - 10 && x <= mDivider + 10)
@@ -2381,7 +2390,7 @@ public:
 private:
     S32 mDivider;
     bool mDragging;
-    bool mShowChat;
+    S32 mEditorMode;
     bool mWorldOnLeft;
 };
 
@@ -3073,7 +3082,7 @@ void LLViewerWindow::draw()
     if (sRobotDollyWorkspace)
     {
         LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance();
-        if (chat && chat->getVisible())
+        if (chat && sRobotDollyWorkspace->editorMode() == 0)
         {
             const LLRect area = sRobotDollyWorkspace->getLocalRect();
             const S32 divider = sRobotDollyWorkspace->divider();
@@ -3097,6 +3106,33 @@ void LLViewerWindow::draw()
                         chat->reshape(dock.getWidth(), dock.getHeight());
                     }
                     chat->setRect(dock);
+                }
+            }
+        }
+    }
+
+    // Reuse the viewer's real Inventory floater as the third editor option.
+    // It is only created when chosen, avoiding startup changes.
+    if (sRobotDollyWorkspace && sRobotDollyWorkspace->editorMode() == 1)
+    {
+        LLFloater* inventory = LLFloaterReg::getInstance("inventory");
+        if (inventory)
+        {
+            const LLRect area = sRobotDollyWorkspace->getLocalRect();
+            const S32 divider = sRobotDollyWorkspace->divider();
+            const LLRect dock = sRobotDollyWorkspace->worldOnLeft()
+                ? LLRect(divider + 5, area.mTop - 3,
+                         area.mRight - 5, area.mBottom + 4)
+                : LLRect(5, area.mTop - 3, divider - 5, area.mBottom + 4);
+            if (dock.getWidth() >= 280 && dock.getHeight() >= 180)
+            {
+                if (inventory->getParent() != sRobotDollyWorkspace)
+                    sRobotDollyWorkspace->addChild(inventory);
+                inventory->setVisible(true);
+                if (inventory->getRect() != dock)
+                {
+                    inventory->reshape(dock.getWidth(), dock.getHeight());
+                    inventory->setRect(dock);
                 }
             }
         }
