@@ -30,6 +30,10 @@ HWND mainWindow=nullptr;
 AreaId menuArea=0;
 Divider dragDivider={};
 bool dragging=false;
+bool cornerDragging=false;
+AreaId cornerArea=0;
+POINT cornerStart={};
+POINT cornerCurrent={};
 int nextCombo=0;
 
 AreaId firstLeaf(const LayoutNode* n) {
@@ -108,6 +112,17 @@ void drawPane(HDC dc,const Pane& pane,const robotdolly::Area& area){
     fill(dc,r,RGB(43,46,52));
     RECT header=r;header.bottom=std::min(r.bottom,r.top+Header);
     fill(dc,header,RGB(66,70,78));
+    // Blender-inspired corner grip: drag diagonally to create a new area.
+    RECT grip={r.right-17,r.bottom-17,r.right-3,r.bottom-3};
+    if(grip.right>grip.left&&grip.bottom>grip.top){
+        HPEN pen=CreatePen(PS_SOLID,1,RGB(165,174,186));
+        HGDIOBJ prior=SelectObject(dc,pen);
+        for(int i=0;i<3;++i){
+            MoveToEx(dc,grip.right-3-i*4,grip.bottom-2,nullptr);
+            LineTo(dc,grip.right-2,grip.bottom-3-i*4);
+        }
+        SelectObject(dc,prior);DeleteObject(pen);
+    }
     int x=r.left+12,y=r.top+48;
     if(area.editor_type=="sl.world"){
         text(dc,x,y,L"SECOND LIFE WORLD",RGB(228,231,235));
@@ -171,6 +186,12 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
     case WM_SETCURSOR:{
         if(LOWORD(l)==HTCLIENT){
             POINT p;GetCursorPos(&p);ScreenToClient(hwnd,&p);
+            for(const auto& pane:panes){
+                RECT corner={pane.box.right-19,pane.box.bottom-19,pane.box.right,pane.box.bottom};
+                if(PtInRect(&corner,p)){
+                    SetCursor(LoadCursorW(nullptr,IDC_SIZENWSE));return TRUE;
+                }
+            }
             for(const auto& d:dividers)if(PtInRect(&d.hit,p)){
                 SetCursor(LoadCursorW(nullptr,d.axis==SplitAxis::Horizontal?IDC_SIZEWE:IDC_SIZENS));
                 return TRUE;
@@ -180,12 +201,23 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
     }
     case WM_LBUTTONDOWN:{
         POINT p={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+        for(const auto& pane:panes){
+            RECT corner={pane.box.right-19,pane.box.bottom-19,pane.box.right,pane.box.bottom};
+            if(PtInRect(&corner,p)){
+                cornerDragging=true;cornerArea=pane.id;cornerStart=p;
+                cornerCurrent=p;SetCapture(hwnd);return 0;
+            }
+        }
         for(const auto& d:dividers)if(PtInRect(&d.hit,p)){
             dragDivider=d;dragging=true;SetCapture(hwnd);return 0;
         }
         break;
     }
     case WM_MOUSEMOVE:{
+        if(cornerDragging){
+            cornerCurrent={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+            return 0;
+        }
         if(dragging){
             int origin=dragDivider.axis==SplitAxis::Horizontal?dragDivider.bounds.left:dragDivider.bounds.top;
             int extent=dragDivider.axis==SplitAxis::Horizontal?
@@ -199,8 +231,22 @@ LRESULT CALLBACK windowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l){
         break;
     }
     case WM_LBUTTONUP:
+        if(cornerDragging){
+            POINT finish={GET_X_LPARAM(l),GET_Y_LPARAM(l)};
+            const int dx=finish.x-cornerStart.x;
+            const int dy=finish.y-cornerStart.y;
+            cornerDragging=false;
+            ReleaseCapture();
+            if(std::max(abs(dx),abs(dy))>=35){
+                // A primarily horizontal gesture makes side-by-side areas.
+                const auto axis=abs(dx)>=abs(dy)?SplitAxis::Horizontal:SplitAxis::Vertical;
+                space->split(cornerArea,axis,"sl.chat");
+                relayout();
+            }
+            return 0;
+        }
         if(dragging){dragging=false;ReleaseCapture();return 0;}break;
-    case WM_CAPTURECHANGED:dragging=false;return 0;
+    case WM_CAPTURECHANGED:dragging=false;cornerDragging=false;return 0;
     case WM_PAINT:{
         PAINTSTRUCT ps;HDC dc=BeginPaint(hwnd,&ps);
         RECT r;GetClientRect(hwnd,&r);fill(dc,r,RGB(26,28,32));
