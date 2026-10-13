@@ -2488,7 +2488,7 @@ public:
             Node& n = mNodes[mDragNode];
             const LLRect r = nodeRect(mDragNode);
             const S32 length = n.vertical ? r.getWidth() : r.getHeight();
-            const S32 pos = n.vertical ? x - r.mLeft : r.mTop - y;
+            const S32 pos = n.vertical ? x - r.mLeft : y - r.mBottom;
             const S32 minpx = llmin(170, length / 2);
             if (length > 0)
                 n.fraction = llclamp((F32)pos / length,
