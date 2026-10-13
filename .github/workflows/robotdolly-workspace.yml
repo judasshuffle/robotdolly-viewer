@@ -1,0 +1,30 @@
+name: ROBOT DOLLY workspace model
+
+on:
+  push:
+    branches:
+      - experiment/workspace-layout
+    paths:
+      - 'indra/newview/robotdolly/**'
+      - '.github/workflows/robotdolly-workspace.yml'
+  pull_request:
+    paths:
+      - 'indra/newview/robotdolly/**'
+      - '.github/workflows/robotdolly-workspace.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  model-smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build workspace smoke test (C++17)
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic \
+            indra/newview/robotdolly/tests/workspace_model_smoke.cpp \
+            -o /tmp/robotdolly-workspace-smoke
+      - name: Run workspace smoke test
+        run: /tmp/robotdolly-workspace-smoke

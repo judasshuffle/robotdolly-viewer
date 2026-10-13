@@ -26,6 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 #include "llviewerwindow.h"
+#include "llfloaterimcontainer.h"
 
 
 // system library includes
@@ -2222,6 +2223,370 @@ void LLViewerWindow::initGLDefaults()
     gBox.prerender();
 }
 
+// First ROBOT DOLLY LLUI host: an actual mouse-aware view, not a painted overlay.
+// The areas are placeholders; the existing world renderer is unchanged.
+class RobotDollyWorkspaceView : public LLView
+{
+public:
+    enum Editor { WORLD, CHAT, INVENTORY, EMPTY };
+    struct Node
+    {
+        bool used = false;
+        bool split = false;
+        bool vertical = true; // true = side by side, false = above/below
+        S32 parent = -1;
+        S32 first = -1;
+        S32 second = -1;
+        S32 editor = EMPTY;
+        F32 fraction = 0.5f;
+    };
+
+    explicit RobotDollyWorkspaceView(const LLView::Params& p)
+        : LLView(p)
+    {
+        mNodes[0].used = true;
+        mNodes[0].split = true;
+        mNodes[0].vertical = true;
+        mNodes[0].first = 1;
+        mNodes[0].second = 2;
+        mNodes[0].fraction = 0.56f;
+        mNodes[1].used = true; mNodes[1].parent = 0; mNodes[1].editor = WORLD;
+        mNodes[2].used = true; mNodes[2].parent = 0; mNodes[2].editor = CHAT;
+    }
+
+    LLRect nodeRect(S32 id) const
+    {
+        LLRect r = getLocalRect();
+        S32 chain[64], count = 0;
+        for (S32 n = id; n > 0 && n < 63 && count < 63; n = mNodes[n].parent)
+            chain[count++] = n;
+        while (count)
+        {
+            const S32 child = chain[--count];
+            const Node& parent = mNodes[mNodes[child].parent];
+            if (parent.vertical)
+            {
+                const S32 mid = r.mLeft + ll_round(r.getWidth() * parent.fraction);
+                if (parent.first == child) r.mRight = mid;
+                else r.mLeft = mid;
+            }
+            else
+            {
+                const S32 mid = r.mBottom + ll_round(r.getHeight() * parent.fraction);
+                if (parent.first == child) r.mBottom = mid; // first is upper
+                else r.mTop = mid;
+            }
+        }
+        return r;
+    }
+
+    S32 sideFor(S32 editor) const
+    {
+        for (S32 i = 0; i < 63; ++i)
+            if (mNodes[i].used && !mNodes[i].split && mNodes[i].editor == editor)
+                return i;
+        return -1;
+    }
+    bool hasWorld() const { return sideFor(WORLD) >= 0; }
+    LLRect editorDock(S32 id) const
+    {
+        const LLRect r = nodeRect(id);
+        return LLRect(r.mLeft + 5, r.mTop - 3, r.mRight - 5, r.mBottom + 4);
+    }
+    LLRect worldRect() const
+    {
+        const LLRect screen = calcScreenRect();
+        const S32 id = sideFor(WORLD);
+        if (id < 0) return LLRect(screen.mLeft, screen.mBottom + 1,
+                                screen.mLeft + 1, screen.mBottom);
+        const LLRect r = nodeRect(id);
+        return LLRect(screen.mLeft + r.mLeft, screen.mBottom + r.mTop,
+                      screen.mLeft + r.mRight, screen.mBottom + r.mBottom);
+    }
+
+    void chooseEditor(S32 id, S32 editor)
+    {
+        if (id < 0 || id >= 63 || !mNodes[id].used || mNodes[id].split ||
+            editor < WORLD || editor > EMPTY) return;
+        if (editor != EMPTY)
+            for (S32 i = 0; i < 63; ++i)
+                if (i != id && mNodes[i].used && !mNodes[i].split &&
+                    mNodes[i].editor == editor) mNodes[i].editor = EMPTY;
+        mNodes[id].editor = editor;
+        if (LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance())
+            if (chat->getParent() == this) chat->setVisible(sideFor(CHAT) >= 0);
+        if (LLFloater* inv = LLFloaterReg::findInstance("inventory"))
+            if (inv->getParent() == this) inv->setVisible(sideFor(INVENTORY) >= 0);
+    }
+
+    S32 freeNode() const
+    {
+        for (S32 i = 3; i < 63; ++i) if (!mNodes[i].used) return i;
+        return -1;
+    }
+    void splitArea(S32 id, bool vertical)
+    {
+        if (id < 0 || id >= 63 || !mNodes[id].used || mNodes[id].split) return;
+        const LLRect r = nodeRect(id);
+        if ((vertical && r.getWidth() < 440) || (!vertical && r.getHeight() < 360))
+            return;
+        const S32 first = freeNode();
+        if (first < 0) return;
+        mNodes[first].used = true;
+        const S32 second = freeNode();
+        if (second < 0) { mNodes[first] = Node(); return; }
+        const S32 previous = mNodes[id].editor;
+        mNodes[first] = Node();
+        mNodes[second] = Node();
+        mNodes[first].used = true; mNodes[first].parent = id;
+        mNodes[first].editor = previous;
+        mNodes[second].used = true; mNodes[second].parent = id;
+        mNodes[second].editor = EMPTY;
+        mNodes[id].split = true;
+        mNodes[id].vertical = vertical;
+        mNodes[id].first = first;
+        mNodes[id].second = second;
+        mNodes[id].fraction = 0.5f;
+        mNodes[id].editor = EMPTY;
+        mOpenNode = -1;
+    }
+    void joinArea(S32 id)
+    {
+        if (id < 0 || id >= 63 || !mNodes[id].used || mNodes[id].split) return;
+        const S32 parent = mNodes[id].parent;
+        if (parent < 0) return;
+        const S32 other = mNodes[parent].first == id
+            ? mNodes[parent].second : mNodes[parent].first;
+        // Only merge adjacent leaves for now; avoid destroying a whole subtree.
+        if (mNodes[other].split) return;
+        const S32 retained_editor = mNodes[id].editor;
+        mNodes[id] = Node();
+        mNodes[other] = Node();
+        const S32 grandparent = mNodes[parent].parent;
+        mNodes[parent] = Node();
+        mNodes[parent].used = true;
+        mNodes[parent].parent = grandparent;
+        mNodes[parent].editor = retained_editor;
+        mOpenNode = -1;
+    }
+
+    void draw() override
+    {
+        const LLFontGL* font = LLFontGL::getFontSansSerif();
+        const LLColor4 border(0.65f, 0.70f, 0.77f, 1.f);
+        const char* names[] = { "WORLD", "CHAT", "INVENTORY", "EMPTY" };
+        for (S32 i = 0; i < 63; ++i)
+        {
+            if (!mNodes[i].used || mNodes[i].split) continue;
+            const LLRect r = nodeRect(i);
+            if (mNodes[i].editor == EMPTY)
+            {
+                gl_rect_2d(r, LLColor4(0.055f, 0.07f, 0.09f, 1.f), true);
+                font->renderUTF8("EMPTY EDITOR AREA", 0, r.mLeft + 14,
+                    r.mTop - 65, border, LLFontGL::LEFT, LLFontGL::TOP);
+            }
+        }
+        LLView::draw();
+        for (S32 i = 0; i < 63; ++i)
+        {
+            if (!mNodes[i].used || mNodes[i].split) continue;
+            const LLRect r = nodeRect(i);
+            gl_rect_2d(r, border, false);
+            const S32 x = r.mLeft + 6, top = r.mTop;
+            gl_rect_2d(LLRect(x, top - 34, x + 172, top - 5),
+                       LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
+            font->renderUTF8(names[mNodes[i].editor], 0, x + 10, top - 11,
+                       LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
+            font->renderUTF8("v", 0, x + 153, top - 11,
+                       LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
+            // Compact AREA menu beside the editor chooser.
+            const S32 ax = x + 177;
+            if (ax + 80 <= r.mRight - 3)
+            {
+                gl_rect_2d(LLRect(ax, top - 34, ax + 80, top - 5),
+                           LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
+                font->renderUTF8("AREA v", 0, ax + 7, top - 11,
+                                 LLColor4(1.f, 0.9f, 0.35f, 1.f),
+                                 LLFontGL::LEFT, LLFontGL::TOP);
+            }
+            if (mOpenArea == i)
+            {
+                const char* actions[] = { "SPLIT H", "SPLIT V", "JOIN" };
+                for (S32 j = 0; j < 3; ++j)
+                {
+                    const S32 y = top - 36 - j * 28;
+                    gl_rect_2d(LLRect(ax, y, ax + 110, y - 28),
+                               LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
+                    font->renderUTF8(actions[j], 0, ax + 7, y - 6,
+                                     LLColor4(1.f, 0.9f, 0.35f, 1.f),
+                                     LLFontGL::LEFT, LLFontGL::TOP);
+                }
+            }
+            if (mOpenNode == i)
+            {
+                // Two-level editor menu: short categories first, real editor
+                // choices second. Only implemented editors are selectable.
+                const char* categories[] = { "FAVOURITES >", "WORLD & BUILD >", "COMMUNICATION >", "INVENTORY >", "OTHER >" };
+                const S32 favouriteEditors[] = { WORLD, CHAT, INVENTORY };
+                const S32 categoryEditors[] = { WORLD, WORLD, CHAT, INVENTORY, EMPTY };
+                const S32 count = mEditorCategory < 0 ? 5 :
+                    mEditorCategory == 0 ? 4 : 2; // Back plus 1-3 entries
+                for (S32 row = 0; row < count; ++row)
+                {
+                    const S32 y = top - 36 - row * 28;
+                    const char* label = "";
+                    S32 choice = -1;
+                    if (mEditorCategory < 0) label = categories[row];
+                    else if (row == 0) label = "< BACK";
+                    else
+                    {
+                        choice = mEditorCategory == 0
+                            ? favouriteEditors[row - 1] : categoryEditors[mEditorCategory];
+                        label = names[choice];
+                    }
+                    gl_rect_2d(LLRect(x, y, x + 172, y - 28),
+                               choice == mNodes[i].editor
+                                   ? LLColor4(0.25f, 0.30f, 0.37f, 1.f)
+                                   : LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
+                    font->renderUTF8(label, 0, x + 9, y - 6,
+                           LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
+                }
+            }
+        }
+    }
+
+    bool handleMouseDown(S32 x, S32 y, MASK mask) override
+    {
+        if (mOpenNode >= 0)
+        {
+            const LLRect r = nodeRect(mOpenNode);
+            const S32 xx = r.mLeft + 6;
+            const S32 count = mEditorCategory < 0 ? 5 : mEditorCategory == 0 ? 4 : 2;
+            if (x >= xx && x <= xx + 172 &&
+                y <= r.mTop - 36 && y >= r.mTop - 36 - count * 28)
+            {
+                const S32 row = (r.mTop - 36 - y) / 28;
+                if (row >= 0 && row < count)
+                {
+                    if (mEditorCategory < 0) mEditorCategory = row;
+                    else if (row == 0) mEditorCategory = -1;
+                    else
+                    {
+                        const S32 favouriteEditors[] = { WORLD, CHAT, INVENTORY };
+                        const S32 categoryEditors[] = { WORLD, WORLD, CHAT, INVENTORY, EMPTY };
+                        const S32 choice = mEditorCategory == 0
+                            ? favouriteEditors[row - 1] : categoryEditors[mEditorCategory];
+                        const S32 id = mOpenNode;
+                        mOpenNode = -1;
+                        mEditorCategory = -1;
+                        chooseEditor(id, choice);
+                    }
+                    return true;
+                }
+            }
+        }
+        if (mOpenArea >= 0)
+        {
+            const LLRect r = nodeRect(mOpenArea);
+            const S32 ax = r.mLeft + 183;
+            if (x >= ax && x <= ax + 110 &&
+                y <= r.mTop - 36 && y >= r.mTop - 120)
+            {
+                const S32 action = (r.mTop - 36 - y) / 28;
+                const S32 id = mOpenArea;
+                mOpenArea = -1;
+                if (action == 0) splitArea(id, false);
+                if (action == 1) splitArea(id, true);
+                if (action == 2) joinArea(id);
+                return true;
+            }
+        }
+        const S32 previous_editor_menu = mOpenNode;
+        const S32 previous_area_menu = mOpenArea;
+        mOpenNode = -1;
+        mOpenArea = -1;
+        for (S32 i = 0; i < 63; ++i)
+        {
+            if (!mNodes[i].used || mNodes[i].split) continue;
+            const LLRect r = nodeRect(i);
+            const S32 xx = r.mLeft + 6;
+            if (y <= r.mTop - 5 && y >= r.mTop - 34)
+            {
+                if (x >= xx && x <= xx + 172)
+                {
+                    mOpenArea = -1;
+                    mOpenNode = previous_editor_menu == i ? -1 : i;
+                    mEditorCategory = -1;
+                    return true;
+                }
+                const S32 ax = xx + 177;
+                if (ax + 80 <= r.mRight - 3 && x >= ax && x <= ax + 80)
+                {
+                    mOpenNode = -1;
+                    mOpenArea = previous_area_menu == i ? -1 : i;
+                    return true;
+                }
+            }
+        }
+        for (S32 i = 0; i < 63; ++i)
+        {
+            const Node& n = mNodes[i];
+            if (!n.used || !n.split) continue;
+            const LLRect r = nodeRect(i);
+            const S32 mid = n.vertical
+                ? r.mLeft + ll_round(r.getWidth() * n.fraction)
+                : r.mBottom + ll_round(r.getHeight() * n.fraction);
+            if (n.vertical
+                ? (abs(x - mid) <= 9 && y >= r.mBottom && y <= r.mTop)
+                : (abs(y - mid) <= 9 && x >= r.mLeft && x <= r.mRight))
+            {
+                mDragNode = i;
+                gFocusMgr.setMouseCapture(this);
+                return true;
+            }
+        }
+        return LLView::handleMouseDown(x, y, mask);
+    }
+
+    bool handleHover(S32 x, S32 y, MASK mask) override
+    {
+        if (mDragNode >= 0)
+        {
+            Node& n = mNodes[mDragNode];
+            const LLRect r = nodeRect(mDragNode);
+            const S32 length = n.vertical ? r.getWidth() : r.getHeight();
+            const S32 pos = n.vertical ? x - r.mLeft : y - r.mBottom;
+            const S32 minpx = llmin(170, length / 2);
+            if (length > 0)
+                n.fraction = llclamp((F32)pos / length,
+                                    (F32)minpx / length, 1.f - (F32)minpx / length);
+            return true;
+        }
+        return LLView::handleHover(x, y, mask);
+    }
+
+    bool handleMouseUp(S32 x, S32 y, MASK mask) override
+    {
+        if (mDragNode >= 0)
+        {
+            handleHover(x, y, mask);
+            mDragNode = -1;
+            gFocusMgr.setMouseCapture(nullptr);
+            return true;
+        }
+        return LLView::handleMouseUp(x, y, mask);
+    }
+
+private:
+    Node mNodes[63];
+    S32 mOpenNode = -1;
+    S32 mEditorCategory = -1;
+    S32 mOpenArea = -1;
+    S32 mDragNode = -1;
+};
+
+static RobotDollyWorkspaceView* sRobotDollyWorkspace = nullptr;
+
 void LLViewerWindow::initBase()
 {
     S32 height = getWindowHeightScaled();
@@ -2339,6 +2704,18 @@ void LLViewerWindow::initBase()
 
     gMenuHolder = getRootView()->getChild<LLViewerMenuHolderGL>("Menu Holder");
     LLMenuGL::sMenuContainer = gMenuHolder;
+
+    // ROBOT DOLLY: install the experimental split workspace in the real UI tree.
+    // Only the divider accepts input; all other clicks pass through to the viewer.
+    LLView::Params rdp;
+    rdp.name("robot_dolly_workspace");
+    rdp.rect(LLRect(0, getWindowHeightScaled() - 110,
+                    getWindowWidthScaled(), 0));
+    rdp.mouse_opaque(false);
+    rdp.follows.flags(FOLLOWS_ALL);
+    sRobotDollyWorkspace = new RobotDollyWorkspaceView(rdp);
+    getRootView()->addChild(sRobotDollyWorkspace);
+
 }
 
 void LLViewerWindow::initWorldUI()
@@ -2873,6 +3250,75 @@ void LLViewerWindow::drawDebugText()
 
 void LLViewerWindow::draw()
 {
+    // Every area has its own editor assignment. Render/dock only its occupant.
+    if (sRobotDollyWorkspace && gToolBarView)
+    {
+        const bool showing_world = sRobotDollyWorkspace->hasWorld();
+        gToolBarView->setVisible(showing_world);
+        if (showing_world)
+        {
+            const LLRect world = sRobotDollyWorkspace->worldRect();
+            const S32 world_width = world.getWidth();
+            if (world_width > 0 && gToolBarView->getRect().getWidth() != world_width)
+                gToolBarView->reshape(world_width, gToolBarView->getRect().getHeight());
+            if (gToolBarView->getRect().mLeft != world.mLeft)
+            {
+                LLRect moved = gToolBarView->getRect();
+                moved.translate(world.mLeft - moved.mLeft, 0);
+                gToolBarView->setRect(moved);
+            }
+        }
+    }
+
+    if (sRobotDollyWorkspace)
+    {
+        const S32 chat_side = sRobotDollyWorkspace->sideFor(RobotDollyWorkspaceView::CHAT);
+        if (LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance())
+        {
+            if (chat_side >= 0)
+            {
+                const LLRect dock = sRobotDollyWorkspace->editorDock(chat_side);
+                if (dock.getWidth() >= 220 && dock.getHeight() >= 180)
+                {
+                    if (chat->getParent() != sRobotDollyWorkspace)
+                        sRobotDollyWorkspace->addChild(chat);
+                    if (chat->getRect() != dock)
+                    {
+                        chat->reshape(dock.getWidth(), dock.getHeight());
+                        chat->setRect(dock);
+                    }
+                    chat->setVisible(true);
+                }
+            }
+            else if (chat->getParent() == sRobotDollyWorkspace)
+                chat->setVisible(false);
+        }
+
+        const S32 inv_side = sRobotDollyWorkspace->sideFor(RobotDollyWorkspaceView::INVENTORY);
+        LLFloater* inventory = inv_side >= 0
+            ? LLFloaterReg::getInstance("inventory")
+            : LLFloaterReg::findInstance("inventory");
+        if (inventory)
+        {
+            if (inv_side >= 0)
+            {
+                const LLRect dock = sRobotDollyWorkspace->editorDock(inv_side);
+                if (dock.getWidth() >= 220 && dock.getHeight() >= 180)
+                {
+                    if (inventory->getParent() != sRobotDollyWorkspace)
+                        sRobotDollyWorkspace->addChild(inventory);
+                    if (inventory->getRect() != dock)
+                    {
+                        inventory->reshape(dock.getWidth(), dock.getHeight());
+                        inventory->setRect(dock);
+                    }
+                    inventory->setVisible(true);
+                }
+            }
+            else if (inventory->getParent() == sRobotDollyWorkspace)
+                inventory->setVisible(false);
+        }
+    }
 
 //#if LL_DEBUG
     LLView::sIsDrawing = true;
@@ -2914,6 +3360,21 @@ void LLViewerWindow::draw()
                         ll_round((getWindowWidthScaled()/2)-100.f),
                         ll_round((getWindowHeightScaled()-60.f)),
             LLColor4( 1.f, 1.f, 1.f, 1.f ),
+            LLFontGL::LEFT, LLFontGL::TOP);
+    }
+
+
+    // ROBOT DOLLY diagnostic: report the real viewport and window dimensions.
+    // This helps distinguish viewport resizing from an unchanged UI overlay.
+    {
+        const std::string rd_view_size = "RD 3D viewport: " +
+            std::to_string(mWorldViewRectRaw.getWidth()) + " x " +
+            std::to_string(mWorldViewRectRaw.getHeight()) +
+            " / window: " + std::to_string(mWindowRectRaw.getWidth()) +
+            " x " + std::to_string(mWindowRectRaw.getHeight());
+        LLFontGL::getFontSansSerif()->renderUTF8(rd_view_size, 0,
+            18, ll_round(getWindowHeightScaled() - 210.f),
+            LLColor4(1.f, 0.9f, 0.35f, 1.f),
             LLFontGL::LEFT, LLFontGL::TOP);
     }
 
@@ -4245,6 +4706,21 @@ void LLViewerWindow::updateWorldViewRect(bool use_full_window)
         new_world_rect.mRight = ll_round((F32)new_world_rect.mRight * mDisplayScale.mV[VX]);
         new_world_rect.mBottom = ll_round((F32)new_world_rect.mBottom * mDisplayScale.mV[VY]);
         new_world_rect.mTop = ll_round((F32)new_world_rect.mTop * mDisplayScale.mV[VY]);
+
+    }
+
+    // ROBOT DOLLY: use the actual draggable WORLD VIEW area's screen rectangle
+    // as the real camera/rendering viewport. Preserve full-window snapshots.
+    if (!use_full_window && sRobotDollyWorkspace)
+    {
+        const LLRect dock = sRobotDollyWorkspace->worldRect();
+        new_world_rect = LLRect(
+            ll_round((F32)dock.mLeft * mDisplayScale.mV[VX]),
+            ll_round((F32)dock.mTop * mDisplayScale.mV[VY]),
+            ll_round((F32)dock.mRight * mDisplayScale.mV[VX]),
+            ll_round((F32)dock.mBottom * mDisplayScale.mV[VY]));
+        new_world_rect.mRight = llmax(new_world_rect.mRight, new_world_rect.mLeft + 1);
+        new_world_rect.mTop = llmax(new_world_rect.mTop, new_world_rect.mBottom + 1);
     }
 
     if (mWorldViewRectRaw != new_world_rect)
