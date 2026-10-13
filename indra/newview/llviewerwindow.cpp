@@ -2252,9 +2252,9 @@ public:
         const S32 bottom = area.mBottom;
         const S32 divider = mDivider;
         const LLColor4 border(0.65f, 0.70f, 0.77f, 1.f);
-        // Let the live world show through the left-hand area.
-        gl_rect_2d(LLRect(divider + 3, top, area.mRight, bottom),
-                   LLColor4(0.055f, 0.07f, 0.09f, 0.96f), true);
+        // No opaque fill here: the existing Conversations floater currently
+        // renders behind this view, so painting a background obscures chat.
+        // This is temporary until Conversations is hosted as a real dock child.
         gl_rect_2d(area, border, false);
         gl_rect_2d(LLRect(divider - 2, top, divider + 2, bottom), border, true);
         const LLFontGL* font = LLFontGL::getFontSansSerif();
