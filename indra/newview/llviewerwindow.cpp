@@ -2985,7 +2985,17 @@ void LLViewerWindow::draw()
                 if (chat->getParent() != sRobotDollyWorkspace)
                     sRobotDollyWorkspace->addChild(chat);
                 if (chat->getRect() != dock)
+                {
+                    // setRect alone moves the outer frame but leaves the
+                    // internal conversation panes at their previous size.
+                    // Reshape first so LLUI propagates dimensions to children.
+                    if (chat->getRect().getWidth() != dock.getWidth() ||
+                        chat->getRect().getHeight() != dock.getHeight())
+                    {
+                        chat->reshape(dock.getWidth(), dock.getHeight());
+                    }
                     chat->setRect(dock);
+                }
             }
         }
     }
