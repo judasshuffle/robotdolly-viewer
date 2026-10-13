@@ -2399,14 +2399,16 @@ public:
                        LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
             font->renderUTF8("v", 0, x + 153, top - 11,
                        LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
+            // A second compact toolbar row makes ALL three actions visible
+            // even in narrow panes (instead of clipping controls to the right).
             const char* actions[] = { "SPLIT H", "SPLIT V", "JOIN" };
+            const S32 action_width = llmax(1, llmin(72, (r.getWidth() - 12) / 3));
             for (S32 j = 0; j < 3; ++j)
             {
-                const S32 bx = x + 177 + j * 78;
-                if (bx + 76 > r.mRight - 4) break;
-                gl_rect_2d(LLRect(bx, top - 34, bx + 76, top - 5),
+                const S32 bx = x + j * action_width;
+                gl_rect_2d(LLRect(bx, top - 37, bx + action_width - 2, top - 63),
                            LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
-                font->renderUTF8(actions[j], 0, bx + 5, top - 11,
+                font->renderUTF8(actions[j], 0, bx + 3, top - 42,
                            LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
             }
             if (mOpenNode == i)
@@ -2447,11 +2449,14 @@ public:
             if (y <= r.mTop - 5 && y >= r.mTop - 34)
             {
                 if (x >= xx && x <= xx + 172) { mOpenNode = i; return true; }
+            }
+            if (y <= r.mTop - 37 && y >= r.mTop - 63)
+            {
+                const S32 action_width = llmax(1, llmin(72, (r.getWidth() - 12) / 3));
                 for (S32 j = 0; j < 3; ++j)
                 {
-                    const S32 bx = xx + 177 + j * 78;
-                    if (bx + 76 > r.mRight - 4) break;
-                    if (x >= bx && x <= bx + 76)
+                    const S32 bx = xx + j * action_width;
+                    if (x >= bx && x <= bx + action_width - 2)
                     {
                         if (j == 0) splitArea(i, false); // upper/lower
                         if (j == 1) splitArea(i, true);  // left/right
