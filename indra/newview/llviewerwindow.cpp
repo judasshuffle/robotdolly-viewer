@@ -2275,7 +2275,7 @@ public:
             gFocusMgr.setMouseCapture(this);
             return true;
         }
-        return false;
+        return LLView::handleMouseDown(x, y, mask);
     }
 
     bool handleHover(S32 x, S32 y, MASK mask) override
@@ -2285,7 +2285,7 @@ public:
             mDivider = llclamp(x, 320, llmax(321, getRect().getWidth() - 220));
             return true;
         }
-        return false;
+        return LLView::handleHover(x, y, mask);
     }
 
     bool handleMouseUp(S32 x, S32 y, MASK mask) override
@@ -2297,7 +2297,7 @@ public:
             gFocusMgr.setMouseCapture(nullptr);
             return true;
         }
-        return false;
+        return LLView::handleMouseUp(x, y, mask);
     }
 
 private:
