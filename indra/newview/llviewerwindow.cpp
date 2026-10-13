@@ -2467,6 +2467,8 @@ public:
                 return true;
             }
         }
+        const S32 previous_editor_menu = mOpenNode;
+        const S32 previous_area_menu = mOpenArea;
         mOpenNode = -1;
         mOpenArea = -1;
         for (S32 i = 0; i < 63; ++i)
@@ -2479,14 +2481,14 @@ public:
                 if (x >= xx && x <= xx + 172)
                 {
                     mOpenArea = -1;
-                    mOpenNode = mOpenNode == i ? -1 : i;
+                    mOpenNode = previous_editor_menu == i ? -1 : i;
                     return true;
                 }
                 const S32 ax = xx + 177;
                 if (ax + 80 <= r.mRight - 3 && x >= ax && x <= ax + 80)
                 {
                     mOpenNode = -1;
-                    mOpenArea = mOpenArea == i ? -1 : i;
+                    mOpenArea = previous_area_menu == i ? -1 : i;
                     return true;
                 }
             }
