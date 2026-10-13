@@ -26,6 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 #include "llviewerwindow.h"
+#include "llfloaterimcontainer.h"
 
 
 // system library includes
@@ -2236,6 +2237,13 @@ public:
         return LLRect(on_screen.mLeft, on_screen.mTop,
                       on_screen.mLeft + mDivider, on_screen.mBottom);
     }
+    LLRect chatRect() const
+    {
+        const LLRect r = calcScreenRect();
+        return LLRect(r.mLeft + mDivider + 5, r.mTop - 2,
+                      r.mRight - 5, r.mBottom + 3);
+    }
+
 
     void draw() override
     {
@@ -2962,6 +2970,23 @@ void LLViewerWindow::drawDebugText()
 
 void LLViewerWindow::draw()
 {
+    // ROBOT DOLLY: keep the existing Conversations floater in the chat area.
+    if (sRobotDollyWorkspace)
+    {
+        LLFloaterIMContainer* conversations = LLFloaterIMContainer::findInstance();
+        if (conversations && conversations->getVisible() && conversations->getParent())
+        {
+            LLRect target;
+            conversations->getParent()->screenRectToLocal(
+                sRobotDollyWorkspace->chatRect(), &target);
+            if (target.getWidth() >= 300 && target.getHeight() >= 180 &&
+                conversations->getRect() != target)
+            {
+                conversations->setRect(target);
+            }
+        }
+    }
+
 
 //#if LL_DEBUG
     LLView::sIsDrawing = true;
