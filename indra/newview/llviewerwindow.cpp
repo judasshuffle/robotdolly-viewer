@@ -2231,6 +2231,28 @@ public:
     explicit RobotDollyWorkspaceView(const LLView::Params& params)
         : LLView(params), mDivider(850), mDragging(false), mShowChat(true) {}
 
+    // Scale the split when the viewer window itself changes size.
+    // LLView's FOLLOWS_ALL changes our bounds, but mDivider was fixed in pixels.
+    void reshape(S32 width, S32 height, bool called_from_parent = true) override
+    {
+        const S32 old_width = getRect().getWidth();
+        if (old_width > 0 && width != old_width)
+        {
+            mDivider = ll_round((F32)mDivider * (F32)width / (F32)old_width);
+        }
+        LLView::reshape(width, height, called_from_parent);
+        mDivider = constrainedDivider(mDivider);
+    }
+
+    S32 constrainedDivider(S32 desired) const
+    {
+        const S32 width = getRect().getWidth();
+        // Keep the two panels on screen even for narrow viewer windows.
+        const S32 left_min = llmin(320, llmax(1, width / 2));
+        const S32 right_min = llmin(220, llmax(1, width - left_min));
+        return llclamp(desired, left_min, llmax(left_min, width - right_min));
+    }
+
     LLRect worldRect() const
     {
         const LLRect on_screen = calcScreenRect();
@@ -2309,7 +2331,7 @@ public:
     {
         if (mDragging)
         {
-            mDivider = llclamp(x, 320, llmax(321, getRect().getWidth() - 220));
+            mDivider = constrainedDivider(x);
             return true;
         }
         return LLView::handleHover(x, y, mask);
@@ -2319,7 +2341,7 @@ public:
     {
         if (mDragging)
         {
-            mDivider = llclamp(x, 110, getRect().getWidth() - 100);
+            mDivider = constrainedDivider(x);
             mDragging = false;
             gFocusMgr.setMouseCapture(nullptr);
             return true;
