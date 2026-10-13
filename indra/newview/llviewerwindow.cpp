@@ -2230,16 +2230,26 @@ class RobotDollyWorkspaceView : public LLView
 public:
     enum Editor { WORLD = 0, CHAT = 1, INVENTORY = 2, EMPTY = 3 };
     explicit RobotDollyWorkspaceView(const LLView::Params& params)
-        : LLView(params), mDivider(850), mDragging(false),
-          mLeftEditor(WORLD), mRightEditor(CHAT), mOpenSide(-1) {}
+        : LLView(params), mDivider(850), mSplitY(0), mSplitSide(-1),
+          mDragging(0), mOpenSide(-1)
+    {
+        mEditors[0] = WORLD;
+        mEditors[1] = CHAT;
+        mEditors[2] = EMPTY;
+    }
 
     void reshape(S32 width, S32 height, bool called_from_parent = true) override
     {
         const S32 old_width = getRect().getWidth();
+        const S32 old_height = getRect().getHeight();
         if (old_width > 0 && width != old_width)
-            mDivider = ll_round((F32)mDivider * (F32)width / (F32)old_width);
+            mDivider = ll_round((F32)mDivider * width / old_width);
+        if (old_height > 0 && height != old_height && mSplitSide >= 0)
+            mSplitY = ll_round((F32)mSplitY * height / old_height);
         LLView::reshape(width, height, called_from_parent);
         mDivider = constrainedDivider(mDivider);
+        mSplitY = llclamp(mSplitY, llmin(170, height / 2),
+                         llmax(llmin(170, height / 2), height - llmin(170, height / 2)));
     }
 
     S32 constrainedDivider(S32 desired) const
@@ -2250,21 +2260,34 @@ public:
         return llclamp(desired, left_min, llmax(left_min, width - right_min));
     }
 
-    S32 editorAt(S32 side) const { return side == 0 ? mLeftEditor : mRightEditor; }
+    S32 areaCount() const { return mSplitSide >= 0 ? 3 : 2; }
+    S32 editorAt(S32 side) const { return mEditors[side]; }
     S32 sideFor(S32 editor) const
     {
-        return mLeftEditor == editor ? 0 : (mRightEditor == editor ? 1 : -1);
+        for (S32 i = 0; i < areaCount(); ++i)
+            if (mEditors[i] == editor) return i;
+        return -1;
     }
     bool hasWorld() const { return sideFor(WORLD) >= 0; }
     LLRect areaRect(S32 side) const
     {
-        const LLRect area = getLocalRect();
-        return side == 0 ? LLRect(0, area.mTop, mDivider, area.mBottom)
-                         : LLRect(mDivider, area.mTop, area.mRight, area.mBottom);
+        const LLRect bounds = getLocalRect();
+        const S32 column = side == 2 ? mSplitSide : side;
+        LLRect result = column == 0
+            ? LLRect(0, bounds.mTop, mDivider, bounds.mBottom)
+            : LLRect(mDivider, bounds.mTop, bounds.mRight, bounds.mBottom);
+        if (mSplitSide == column)
+        {
+            if (side == 2)
+                result.mTop = mSplitY;
+            else
+                result.mBottom = mSplitY;
+        }
+        return result;
     }
     LLRect editorDock(S32 side) const
     {
-        LLRect r = areaRect(side);
+        const LLRect r = areaRect(side);
         return LLRect(r.mLeft + 5, r.mTop - 3, r.mRight - 5, r.mBottom + 4);
     }
     LLRect worldRect() const
@@ -2273,49 +2296,64 @@ public:
         const S32 side = sideFor(WORLD);
         if (side < 0) return LLRect(screen.mLeft, screen.mTop,
                                      screen.mLeft + 1, screen.mTop - 1);
-        const LLRect area = areaRect(side);
-        return LLRect(screen.mLeft + area.mLeft, screen.mTop,
-                      screen.mLeft + area.mRight, screen.mBottom);
+        const LLRect r = areaRect(side);
+        return LLRect(screen.mLeft + r.mLeft, screen.mBottom + r.mTop,
+                      screen.mLeft + r.mRight, screen.mBottom + r.mBottom);
     }
 
     void chooseEditor(S32 side, S32 choice)
     {
-        if (choice < WORLD || choice > EMPTY) return;
-        S32& selected = side == 0 ? mLeftEditor : mRightEditor;
-        S32& other = side == 0 ? mRightEditor : mLeftEditor;
-        // There is one underlying SL world and one existing floater per editor.
-        // Moving an already-used editor leaves its old area EMPTY. It never
-        // changes the unrelated editor in the other area.
-        if (other == choice && choice != EMPTY) other = EMPTY;
-        selected = choice;
+        if (side < 0 || side >= areaCount() || choice < WORLD || choice > EMPTY) return;
+        if (choice != EMPTY)
+            for (S32 i = 0; i < areaCount(); ++i)
+                if (i != side && mEditors[i] == choice) mEditors[i] = EMPTY;
+        mEditors[side] = choice;
         if (LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance())
             if (chat->getParent() == this) chat->setVisible(sideFor(CHAT) >= 0);
-        if (LLFloater* inventory = LLFloaterReg::findInstance("inventory"))
-            if (inventory->getParent() == this) inventory->setVisible(sideFor(INVENTORY) >= 0);
+        if (LLFloater* inv = LLFloaterReg::findInstance("inventory"))
+            if (inv->getParent() == this) inv->setVisible(sideFor(INVENTORY) >= 0);
+    }
+
+    void splitArea(S32 side)
+    {
+        if (mSplitSide >= 0 || side < 0 || side > 1) return;
+        mSplitSide = side;
+        mSplitY = getLocalRect().getHeight() / 2;
+        mEditors[2] = EMPTY;
+        mOpenSide = -1;
     }
 
     void draw() override
     {
-        const LLRect area = getLocalRect();
-        const S32 top = area.mTop;
+        const LLRect bounds = getLocalRect();
         const LLColor4 border(0.65f, 0.70f, 0.77f, 1.f);
-        gl_rect_2d(area, border, false);
-        gl_rect_2d(LLRect(mDivider - 2, top, mDivider + 2, area.mBottom), border, true);
         const LLFontGL* font = LLFontGL::getFontSansSerif();
-        for (S32 side = 0; side < 2; ++side)
+        gl_rect_2d(bounds, border, false);
+        gl_rect_2d(LLRect(mDivider - 2, bounds.mTop, mDivider + 2, bounds.mBottom),
+                   border, true);
+        if (mSplitSide >= 0)
+        {
+            const LLRect r = areaRect(2);
+            gl_rect_2d(LLRect(r.mLeft, mSplitY + 2, r.mRight, mSplitY - 2),
+                       border, true);
+        }
+        for (S32 side = 0; side < areaCount(); ++side)
         {
             if (editorAt(side) == EMPTY)
             {
-                gl_rect_2d(areaRect(side), LLColor4(0.055f, 0.07f, 0.09f, 1.f), true);
-                font->renderUTF8("EMPTY EDITOR AREA", 0, areaRect(side).mLeft + 14,
-                                 top - 65, border, LLFontGL::LEFT, LLFontGL::TOP);
+                const LLRect r = areaRect(side);
+                gl_rect_2d(r, LLColor4(0.055f, 0.07f, 0.09f, 1.f), true);
+                font->renderUTF8("EMPTY EDITOR AREA", 0, r.mLeft + 14,
+                                 r.mTop - 65, border, LLFontGL::LEFT, LLFontGL::TOP);
             }
         }
         LLView::draw();
         const char* names[] = { "WORLD", "CHAT", "INVENTORY", "EMPTY" };
-        for (S32 side = 0; side < 2; ++side)
+        for (S32 side = 0; side < areaCount(); ++side)
         {
-            const S32 x = areaRect(side).mLeft + 6;
+            const LLRect r = areaRect(side);
+            const S32 x = r.mLeft + 6;
+            const S32 top = r.mTop;
             gl_rect_2d(LLRect(x, top - 34, x + 177, top - 5),
                        LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
             font->renderUTF8(names[editorAt(side)], 0, x + 12, top - 11,
@@ -2324,6 +2362,14 @@ public:
             font->renderUTF8("v", 0, x + 157, top - 11,
                              LLColor4(1.f, 0.9f, 0.35f, 1.f),
                              LLFontGL::LEFT, LLFontGL::TOP);
+            if (mSplitSide < 0 && side < 2)
+            {
+                gl_rect_2d(LLRect(x + 184, top - 34, x + 256, top - 5),
+                           LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
+                font->renderUTF8("SPLIT", 0, x + 190, top - 11,
+                                 LLColor4(1.f, 0.9f, 0.35f, 1.f),
+                                 LLFontGL::LEFT, LLFontGL::TOP);
+            }
             if (mOpenSide == side)
             {
                 for (S32 i = 0; i < 4; ++i)
@@ -2342,36 +2388,53 @@ public:
 
     bool handleMouseDown(S32 x, S32 y, MASK mask) override
     {
-        const S32 top = getLocalRect().mTop;
         if (mOpenSide >= 0)
         {
-            const S32 menu_x = areaRect(mOpenSide).mLeft + 6;
-            if (x >= menu_x && x <= menu_x + 177 &&
-                y <= top - 36 && y >= top - 148)
+            const LLRect menu = areaRect(mOpenSide);
+            const S32 mx = menu.mLeft + 6;
+            if (x >= mx && x <= mx + 177 &&
+                y <= menu.mTop - 36 && y >= menu.mTop - 148)
             {
-                const S32 choice = (top - 36 - y) / 28;
+                const S32 choice = (menu.mTop - 36 - y) / 28;
                 const S32 side = mOpenSide;
                 mOpenSide = -1;
                 chooseEditor(side, choice);
                 return true;
             }
         }
-        if (y <= top - 5 && y >= top - 34)
+        for (S32 side = 0; side < areaCount(); ++side)
         {
-            for (S32 side = 0; side < 2; ++side)
+            const LLRect r = areaRect(side);
+            const S32 x0 = r.mLeft + 6;
+            if (y <= r.mTop - 5 && y >= r.mTop - 34)
             {
-                const S32 editor_x = areaRect(side).mLeft + 6;
-                if (x >= editor_x && x <= editor_x + 177)
+                if (x >= x0 && x <= x0 + 177)
                 {
                     mOpenSide = mOpenSide == side ? -1 : side;
+                    return true;
+                }
+                if (mSplitSide < 0 && side < 2 &&
+                    x >= x0 + 184 && x <= x0 + 256)
+                {
+                    splitArea(side);
                     return true;
                 }
             }
         }
         mOpenSide = -1;
+        if (mSplitSide >= 0)
+        {
+            const LLRect r = areaRect(2);
+            if (x >= r.mLeft && x <= r.mRight && y >= mSplitY - 9 && y <= mSplitY + 9)
+            {
+                mDragging = 2;
+                gFocusMgr.setMouseCapture(this);
+                return true;
+            }
+        }
         if (x >= mDivider - 10 && x <= mDivider + 10)
         {
-            mDragging = true;
+            mDragging = 1;
             gFocusMgr.setMouseCapture(this);
             return true;
         }
@@ -2380,9 +2443,12 @@ public:
 
     bool handleHover(S32 x, S32 y, MASK mask) override
     {
-        if (mDragging)
+        if (mDragging == 1) { mDivider = constrainedDivider(x); return true; }
+        if (mDragging == 2)
         {
-            mDivider = constrainedDivider(x);
+            const S32 h = getLocalRect().getHeight();
+            const S32 margin = llmin(170, h / 2);
+            mSplitY = llclamp(y, margin, llmax(margin, h - margin));
             return true;
         }
         return LLView::handleHover(x, y, mask);
@@ -2392,8 +2458,8 @@ public:
     {
         if (mDragging)
         {
-            mDivider = constrainedDivider(x);
-            mDragging = false;
+            handleHover(x, y, mask);
+            mDragging = 0;
             gFocusMgr.setMouseCapture(nullptr);
             return true;
         }
@@ -2402,9 +2468,10 @@ public:
 
 private:
     S32 mDivider;
-    bool mDragging;
-    S32 mLeftEditor;
-    S32 mRightEditor;
+    S32 mSplitY;
+    S32 mSplitSide;
+    S32 mDragging;
+    S32 mEditors[3];
     S32 mOpenSide;
 };
 
