@@ -2228,18 +2228,16 @@ void LLViewerWindow::initGLDefaults()
 class RobotDollyWorkspaceView : public LLView
 {
 public:
+    enum Editor { WORLD = 0, CHAT = 1, INVENTORY = 2, EMPTY = 3 };
     explicit RobotDollyWorkspaceView(const LLView::Params& params)
-        : LLView(params), mDivider(850), mDragging(false), mEditorMode(0), mWorldOnLeft(true), mChooserOpen(false), mWorldChooserOpen(false) {}
+        : LLView(params), mDivider(850), mDragging(false),
+          mLeftEditor(WORLD), mRightEditor(CHAT), mOpenSide(-1) {}
 
-    // Scale the split when the viewer window itself changes size.
-    // LLView's FOLLOWS_ALL changes our bounds, but mDivider was fixed in pixels.
     void reshape(S32 width, S32 height, bool called_from_parent = true) override
     {
         const S32 old_width = getRect().getWidth();
         if (old_width > 0 && width != old_width)
-        {
             mDivider = ll_round((F32)mDivider * (F32)width / (F32)old_width);
-        }
         LLView::reshape(width, height, called_from_parent);
         mDivider = constrainedDivider(mDivider);
     }
@@ -2247,163 +2245,130 @@ public:
     S32 constrainedDivider(S32 desired) const
     {
         const S32 width = getRect().getWidth();
-        // Keep the two panels on screen even for narrow viewer windows.
         const S32 left_min = llmin(320, llmax(1, width / 2));
         const S32 right_min = llmin(220, llmax(1, width - left_min));
         return llclamp(desired, left_min, llmax(left_min, width - right_min));
     }
 
+    S32 editorAt(S32 side) const { return side == 0 ? mLeftEditor : mRightEditor; }
+    S32 sideFor(S32 editor) const
+    {
+        return mLeftEditor == editor ? 0 : (mRightEditor == editor ? 1 : -1);
+    }
+    bool hasWorld() const { return sideFor(WORLD) >= 0; }
+    LLRect areaRect(S32 side) const
+    {
+        const LLRect area = getLocalRect();
+        return side == 0 ? LLRect(0, area.mTop, mDivider, area.mBottom)
+                         : LLRect(mDivider, area.mTop, area.mRight, area.mBottom);
+    }
+    LLRect editorDock(S32 side) const
+    {
+        LLRect r = areaRect(side);
+        return LLRect(r.mLeft + 5, r.mTop - 3, r.mRight - 5, r.mBottom + 4);
+    }
     LLRect worldRect() const
     {
-        const LLRect on_screen = calcScreenRect();
-        return mWorldOnLeft
-            ? LLRect(on_screen.mLeft, on_screen.mTop,
-                     on_screen.mLeft + mDivider, on_screen.mBottom)
-            : LLRect(on_screen.mLeft + mDivider, on_screen.mTop,
-                     on_screen.mRight, on_screen.mBottom);
-    }
-    bool worldOnLeft() const { return mWorldOnLeft; }
-    S32 editorMode() const { return mEditorMode; }
-    S32 divider() const { return mDivider; }
-    LLRect chatRect() const
-    {
-        const LLRect r = calcScreenRect();
-        return mWorldOnLeft
-            ? LLRect(r.mLeft + mDivider + 5, r.mTop - 2,
-                     r.mRight - 5, r.mBottom + 3)
-            : LLRect(r.mLeft + 5, r.mTop - 2,
-                     r.mLeft + mDivider - 5, r.mBottom + 3);
+        const LLRect screen = calcScreenRect();
+        const S32 side = sideFor(WORLD);
+        if (side < 0) return LLRect(screen.mLeft, screen.mTop,
+                                     screen.mLeft + 1, screen.mTop - 1);
+        const LLRect area = areaRect(side);
+        return LLRect(screen.mLeft + area.mLeft, screen.mTop,
+                      screen.mLeft + area.mRight, screen.mBottom);
     }
 
+    void chooseEditor(S32 side, S32 choice)
+    {
+        if (choice < WORLD || choice > EMPTY) return;
+        S32& selected = side == 0 ? mLeftEditor : mRightEditor;
+        S32& other = side == 0 ? mRightEditor : mLeftEditor;
+        // There is one underlying SL world and one existing floater per editor.
+        // Moving an already-used editor leaves its old area EMPTY. It never
+        // changes the unrelated editor in the other area.
+        if (other == choice && choice != EMPTY) other = EMPTY;
+        selected = choice;
+        if (LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance())
+            if (chat->getParent() == this) chat->setVisible(sideFor(CHAT) >= 0);
+        if (LLFloater* inventory = LLFloaterReg::findInstance("inventory"))
+            if (inventory->getParent() == this) inventory->setVisible(sideFor(INVENTORY) >= 0);
+    }
 
     void draw() override
     {
         const LLRect area = getLocalRect();
         const S32 top = area.mTop;
-        const S32 bottom = area.mBottom;
-        const S32 divider = mDivider;
         const LLColor4 border(0.65f, 0.70f, 0.77f, 1.f);
-        // No opaque fill here: the existing Conversations floater currently
-        // renders behind this view, so painting a background obscures chat.
-        // This is temporary until Conversations is hosted as a real dock child.
         gl_rect_2d(area, border, false);
-        gl_rect_2d(LLRect(divider - 2, top, divider + 2, bottom), border, true);
+        gl_rect_2d(LLRect(mDivider - 2, top, mDivider + 2, area.mBottom), border, true);
         const LLFontGL* font = LLFontGL::getFontSansSerif();
-        const S32 world_label_x = mWorldOnLeft ? 10 : divider + 20;
-        const S32 chat_label_x = mWorldOnLeft ? divider + 12 : 12;
-        font->renderUTF8("ROBOT DOLLY | WORLD VIEW", 0, world_label_x, top - 9,
-            LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
-        font->renderUTF8("CHAT", 0, chat_label_x, top - 44,
-            LLColor4(1.f, 1.f, 1.f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
-        font->renderUTF8("Drag divider", 0, chat_label_x, top - 68,
-            border, LLFontGL::LEFT, LLFontGL::TOP);
-        if (mEditorMode == 2)
+        for (S32 side = 0; side < 2; ++side)
         {
-            gl_rect_2d(mWorldOnLeft
-                           ? LLRect(divider + 3, top, area.mRight, bottom)
-                           : LLRect(area.mLeft, top, divider - 3, bottom),
-                       LLColor4(0.055f, 0.07f, 0.09f, 1.f), true);
-            font->renderUTF8("EMPTY EDITOR AREA", 0, chat_label_x + 8, top - 65,
-                border, LLFontGL::LEFT, LLFontGL::TOP);
+            if (editorAt(side) == EMPTY)
+            {
+                gl_rect_2d(areaRect(side), LLColor4(0.055f, 0.07f, 0.09f, 1.f), true);
+                font->renderUTF8("EMPTY EDITOR AREA", 0, areaRect(side).mLeft + 14,
+                                 top - 65, border, LLFontGL::LEFT, LLFontGL::TOP);
+            }
         }
         LLView::draw();
-        // Matching editor selectors for BOTH areas. A single world renderer
-        // exists for now; choosing WORLD in the other area transfers it there.
-        const S32 editor_x = mWorldOnLeft ? divider + 6 : 6;
-        const S32 world_x = mWorldOnLeft ? 6 : divider + 6;
-        auto drawSelector = [&](S32 x, bool is_world, bool opened)
+        const char* names[] = { "WORLD", "CHAT", "INVENTORY", "EMPTY" };
+        for (S32 side = 0; side < 2; ++side)
         {
+            const S32 x = areaRect(side).mLeft + 6;
             gl_rect_2d(LLRect(x, top - 34, x + 177, top - 5),
                        LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
-            const char* name = is_world ? "WORLD" :
-                               mEditorMode == 0 ? "CHAT" :
-                               mEditorMode == 1 ? "INVENTORY" : "EMPTY";
-            font->renderUTF8(name, 0, x + 12, top - 11,
+            font->renderUTF8(names[editorAt(side)], 0, x + 12, top - 11,
                              LLColor4(1.f, 0.9f, 0.35f, 1.f),
                              LLFontGL::LEFT, LLFontGL::TOP);
             font->renderUTF8("v", 0, x + 157, top - 11,
                              LLColor4(1.f, 0.9f, 0.35f, 1.f),
                              LLFontGL::LEFT, LLFontGL::TOP);
-            if (opened)
+            if (mOpenSide == side)
             {
-                const char* choices[] = { "WORLD", "CHAT", "INVENTORY", "EMPTY" };
                 for (S32 i = 0; i < 4; ++i)
                 {
                     const S32 row_top = top - 36 - i * 28;
-                    const bool active = is_world ? i == 0 :
-                        (i == 1 + mEditorMode || (mEditorMode == 2 && i == 3));
                     gl_rect_2d(LLRect(x, row_top, x + 177, row_top - 28),
-                               active ? LLColor4(0.25f, 0.30f, 0.37f, 1.f)
-                                      : LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
-                    font->renderUTF8(choices[i], 0, x + 12, row_top - 6,
+                               editorAt(side) == i ? LLColor4(0.25f, 0.30f, 0.37f, 1.f)
+                                                   : LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
+                    font->renderUTF8(names[i], 0, x + 12, row_top - 6,
                                      LLColor4(1.f, 0.9f, 0.35f, 1.f),
                                      LLFontGL::LEFT, LLFontGL::TOP);
                 }
             }
-        };
-        drawSelector(editor_x, false, mChooserOpen);
-        drawSelector(world_x, true, mWorldChooserOpen);
+        }
     }
 
     bool handleMouseDown(S32 x, S32 y, MASK mask) override
     {
         const S32 top = getLocalRect().mTop;
-        const S32 editor_x = mWorldOnLeft ? mDivider + 6 : 6;
-        const S32 world_x = mWorldOnLeft ? 6 : mDivider + 6;
-        auto selectEditor = [&](S32 choice, bool from_world)
+        if (mOpenSide >= 0)
         {
-            if (choice == 0)
+            const S32 menu_x = areaRect(mOpenSide).mLeft + 6;
+            if (x >= menu_x && x <= menu_x + 177 &&
+                y <= top - 36 && y >= top - 148)
             {
-                // Choose WORLD on the other side: exchange area positions.
-                if (!from_world) mWorldOnLeft = !mWorldOnLeft;
-            }
-            else
-            {
-                const S32 next_mode = choice == 1 ? 0 : choice == 2 ? 1 : 2;
-                if (from_world) mWorldOnLeft = !mWorldOnLeft;
-                mEditorMode = next_mode;
-                if (LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance())
-                    if (chat->getParent() == this) chat->setVisible(mEditorMode == 0);
-                if (LLFloater* inventory = LLFloaterReg::findInstance("inventory"))
-                    if (inventory->getParent() == this) inventory->setVisible(mEditorMode == 1);
-            }
-        };
-        if (y <= top - 36 && y >= top - 148)
-        {
-            const S32 choice = (top - 36 - y) / 28;
-            if (choice >= 0 && choice < 4)
-            {
-                if (mChooserOpen && x >= editor_x && x <= editor_x + 177)
-                {
-                    selectEditor(choice, false);
-                    mChooserOpen = false;
-                    return true;
-                }
-                if (mWorldChooserOpen && x >= world_x && x <= world_x + 177)
-                {
-                    selectEditor(choice, true);
-                    mWorldChooserOpen = false;
-                    return true;
-                }
+                const S32 choice = (top - 36 - y) / 28;
+                const S32 side = mOpenSide;
+                mOpenSide = -1;
+                chooseEditor(side, choice);
+                return true;
             }
         }
         if (y <= top - 5 && y >= top - 34)
         {
-            if (x >= editor_x && x <= editor_x + 177)
+            for (S32 side = 0; side < 2; ++side)
             {
-                mChooserOpen = !mChooserOpen;
-                mWorldChooserOpen = false;
-                return true;
-            }
-            if (x >= world_x && x <= world_x + 177)
-            {
-                mWorldChooserOpen = !mWorldChooserOpen;
-                mChooserOpen = false;
-                return true;
+                const S32 editor_x = areaRect(side).mLeft + 6;
+                if (x >= editor_x && x <= editor_x + 177)
+                {
+                    mOpenSide = mOpenSide == side ? -1 : side;
+                    return true;
+                }
             }
         }
-        mChooserOpen = false;
-        mWorldChooserOpen = false;
+        mOpenSide = -1;
         if (x >= mDivider - 10 && x <= mDivider + 10)
         {
             mDragging = true;
@@ -2438,10 +2403,9 @@ public:
 private:
     S32 mDivider;
     bool mDragging;
-    S32 mEditorMode;
-    bool mWorldOnLeft;
-    bool mChooserOpen;
-    bool mWorldChooserOpen;
+    S32 mLeftEditor;
+    S32 mRightEditor;
+    S32 mOpenSide;
 };
 
 static RobotDollyWorkspaceView* sRobotDollyWorkspace = nullptr;
@@ -3109,82 +3073,73 @@ void LLViewerWindow::drawDebugText()
 
 void LLViewerWindow::draw()
 {
-    // ROBOT DOLLY: constrain the original toolbar layout to WORLD VIEW.
-    // Camera viewport changes alone do not resize these ordinary LLUI views.
-    // Use reshape to propagate width changes to toolbar child layouts.
+    // Every area has its own editor assignment. Render/dock only its occupant.
     if (sRobotDollyWorkspace && gToolBarView)
     {
-        const LLRect world = sRobotDollyWorkspace->worldRect();
-        const S32 world_width = world.getWidth();
-        const LLRect toolbar_rect = gToolBarView->getRect();
-        if (world_width > 0 && toolbar_rect.getWidth() != world_width)
-            gToolBarView->reshape(world_width, toolbar_rect.getHeight());
-        // Move toolbar to follow the world when editors exchange sides.
-        if (gToolBarView->getRect().mLeft != world.mLeft)
+        const bool showing_world = sRobotDollyWorkspace->hasWorld();
+        gToolBarView->setVisible(showing_world);
+        if (showing_world)
         {
-            LLRect moved = gToolBarView->getRect();
-            moved.translate(world.mLeft - moved.mLeft, 0);
-            gToolBarView->setRect(moved);
+            const LLRect world = sRobotDollyWorkspace->worldRect();
+            const S32 world_width = world.getWidth();
+            if (world_width > 0 && gToolBarView->getRect().getWidth() != world_width)
+                gToolBarView->reshape(world_width, gToolBarView->getRect().getHeight());
+            if (gToolBarView->getRect().mLeft != world.mLeft)
+            {
+                LLRect moved = gToolBarView->getRect();
+                moved.translate(world.mLeft - moved.mLeft, 0);
+                gToolBarView->setRect(moved);
+            }
         }
     }
 
-    // ROBOT DOLLY experimental dock: parent existing Conversations under workspace.
     if (sRobotDollyWorkspace)
     {
-        LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance();
-        if (chat && sRobotDollyWorkspace->editorMode() == 0)
+        const S32 chat_side = sRobotDollyWorkspace->sideFor(RobotDollyWorkspaceView::CHAT);
+        if (LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance())
         {
-            const LLRect area = sRobotDollyWorkspace->getLocalRect();
-            const S32 divider = sRobotDollyWorkspace->divider();
-            const LLRect dock = sRobotDollyWorkspace->worldOnLeft()
-                ? LLRect(divider + 5, area.mTop - 3,
-                         area.mRight - 5, area.mBottom + 4)
-                : LLRect(5, area.mTop - 3,
-                         divider - 5, area.mBottom + 4);
-            if (dock.getWidth() >= 280 && dock.getHeight() >= 180)
+            if (chat_side >= 0)
             {
-                if (chat->getParent() != sRobotDollyWorkspace)
-                    sRobotDollyWorkspace->addChild(chat);
-                if (chat->getRect() != dock)
+                const LLRect dock = sRobotDollyWorkspace->editorDock(chat_side);
+                if (dock.getWidth() >= 220 && dock.getHeight() >= 180)
                 {
-                    // setRect alone moves the outer frame but leaves the
-                    // internal conversation panes at their previous size.
-                    // Reshape first so LLUI propagates dimensions to children.
-                    if (chat->getRect().getWidth() != dock.getWidth() ||
-                        chat->getRect().getHeight() != dock.getHeight())
+                    if (chat->getParent() != sRobotDollyWorkspace)
+                        sRobotDollyWorkspace->addChild(chat);
+                    if (chat->getRect() != dock)
                     {
                         chat->reshape(dock.getWidth(), dock.getHeight());
+                        chat->setRect(dock);
                     }
-                    chat->setRect(dock);
+                    chat->setVisible(true);
                 }
             }
+            else if (chat->getParent() == sRobotDollyWorkspace)
+                chat->setVisible(false);
         }
-    }
 
-    // Reuse the viewer's real Inventory floater as the third editor option.
-    // It is only created when chosen, avoiding startup changes.
-    if (sRobotDollyWorkspace && sRobotDollyWorkspace->editorMode() == 1)
-    {
-        LLFloater* inventory = LLFloaterReg::getInstance("inventory");
+        const S32 inv_side = sRobotDollyWorkspace->sideFor(RobotDollyWorkspaceView::INVENTORY);
+        LLFloater* inventory = inv_side >= 0
+            ? LLFloaterReg::getInstance("inventory")
+            : LLFloaterReg::findInstance("inventory");
         if (inventory)
         {
-            const LLRect area = sRobotDollyWorkspace->getLocalRect();
-            const S32 divider = sRobotDollyWorkspace->divider();
-            const LLRect dock = sRobotDollyWorkspace->worldOnLeft()
-                ? LLRect(divider + 5, area.mTop - 3,
-                         area.mRight - 5, area.mBottom + 4)
-                : LLRect(5, area.mTop - 3, divider - 5, area.mBottom + 4);
-            if (dock.getWidth() >= 280 && dock.getHeight() >= 180)
+            if (inv_side >= 0)
             {
-                if (inventory->getParent() != sRobotDollyWorkspace)
-                    sRobotDollyWorkspace->addChild(inventory);
-                inventory->setVisible(true);
-                if (inventory->getRect() != dock)
+                const LLRect dock = sRobotDollyWorkspace->editorDock(inv_side);
+                if (dock.getWidth() >= 220 && dock.getHeight() >= 180)
                 {
-                    inventory->reshape(dock.getWidth(), dock.getHeight());
-                    inventory->setRect(dock);
+                    if (inventory->getParent() != sRobotDollyWorkspace)
+                        sRobotDollyWorkspace->addChild(inventory);
+                    if (inventory->getRect() != dock)
+                    {
+                        inventory->reshape(dock.getWidth(), dock.getHeight());
+                        inventory->setRect(dock);
+                    }
+                    inventory->setVisible(true);
                 }
             }
+            else if (inventory->getParent() == sRobotDollyWorkspace)
+                inventory->setVisible(false);
         }
     }
 
