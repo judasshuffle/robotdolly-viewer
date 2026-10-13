@@ -2228,7 +2228,14 @@ class RobotDollyWorkspaceView : public LLView
 {
 public:
     explicit RobotDollyWorkspaceView(const LLView::Params& params)
-        : LLView(params), mDivider(280), mDragging(false) {}
+        : LLView(params), mDivider(850), mDragging(false) {}
+
+    LLRect worldRect() const
+    {
+        const LLRect on_screen = calcScreenRect();
+        return LLRect(on_screen.mLeft, on_screen.mTop,
+                      on_screen.mLeft + mDivider, on_screen.mBottom);
+    }
 
     void draw() override
     {
@@ -2237,14 +2244,14 @@ public:
         const S32 bottom = area.mBottom;
         const S32 divider = mDivider;
         const LLColor4 border(0.65f, 0.70f, 0.77f, 1.f);
-        gl_rect_2d(area, LLColor4(0.055f, 0.07f, 0.09f, 0.86f), true);
+        // Let the live world show through the left-hand area.
+        gl_rect_2d(LLRect(divider + 3, top, area.mRight, bottom),
+                   LLColor4(0.055f, 0.07f, 0.09f, 0.96f), true);
         gl_rect_2d(area, border, false);
         gl_rect_2d(LLRect(divider - 2, top, divider + 2, bottom), border, true);
         const LLFontGL* font = LLFontGL::getFontSansSerif();
-        font->renderUTF8("ROBOT DOLLY | WORKSPACE", 0, 10, top - 9,
+        font->renderUTF8("ROBOT DOLLY | WORLD VIEW", 0, 10, top - 9,
             LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
-        font->renderUTF8("WORLD VIEW", 0, 10, top - 44,
-            LLColor4(1.f, 1.f, 1.f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
         font->renderUTF8("CHAT", 0, divider + 12, top - 44,
             LLColor4(1.f, 1.f, 1.f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
         font->renderUTF8("Drag divider", 0, divider + 12, top - 68,
@@ -2267,7 +2274,7 @@ public:
     {
         if (mDragging)
         {
-            mDivider = llclamp(x, 110, getRect().getWidth() - 100);
+            mDivider = llclamp(x, 320, llmax(321, getRect().getWidth() - 220));
             return true;
         }
         return false;
@@ -2289,6 +2296,8 @@ private:
     S32 mDivider;
     bool mDragging;
 };
+
+static RobotDollyWorkspaceView* sRobotDollyWorkspace = nullptr;
 
 void LLViewerWindow::initBase()
 {
@@ -2412,11 +2421,12 @@ void LLViewerWindow::initBase()
     // Only the divider accepts input; all other clicks pass through to the viewer.
     LLView::Params rdp;
     rdp.name("robot_dolly_workspace");
-    rdp.rect(LLRect(16, getWindowHeightScaled() - 86, 476,
-                    getWindowHeightScaled() - 196));
+    rdp.rect(LLRect(0, getWindowHeightScaled() - 110,
+                    getWindowWidthScaled(), 0));
     rdp.mouse_opaque(false);
-    rdp.follows.flags(FOLLOWS_LEFT | FOLLOWS_TOP);
-    getRootView()->addChild(new RobotDollyWorkspaceView(rdp));
+    rdp.follows.flags(FOLLOWS_ALL);
+    sRobotDollyWorkspace = new RobotDollyWorkspaceView(rdp);
+    getRootView()->addChild(sRobotDollyWorkspace);
 
 }
 
@@ -4340,14 +4350,20 @@ void LLViewerWindow::updateWorldViewRect(bool use_full_window)
         new_world_rect.mBottom = ll_round((F32)new_world_rect.mBottom * mDisplayScale.mV[VY]);
         new_world_rect.mTop = ll_round((F32)new_world_rect.mTop * mDisplayScale.mV[VY]);
 
-        // ROBOT DOLLY proof of concept: reserve a right-hand editor column
-        // from the *real* 3D world viewport, not just its UI overlay.
-        // The normal full-window path (e.g. snapshots) remains unchanged.
-        const S32 reserved_width = ll_round(320.f * mDisplayScale.mV[VX]);
-        if (new_world_rect.getWidth() > reserved_width + 320)
-        {
-            new_world_rect.mRight -= reserved_width;
-        }
+    }
+
+    // ROBOT DOLLY: use the actual draggable WORLD VIEW area's screen rectangle
+    // as the real camera/rendering viewport. Preserve full-window snapshots.
+    if (!use_full_window && sRobotDollyWorkspace)
+    {
+        const LLRect dock = sRobotDollyWorkspace->worldRect();
+        new_world_rect = LLRect(
+            ll_round((F32)dock.mLeft * mDisplayScale.mV[VX]),
+            ll_round((F32)dock.mTop * mDisplayScale.mV[VY]),
+            ll_round((F32)dock.mRight * mDisplayScale.mV[VX]),
+            ll_round((F32)dock.mBottom * mDisplayScale.mV[VY]));
+        new_world_rect.mRight = llmax(new_world_rect.mRight, new_world_rect.mLeft + 1);
+        new_world_rect.mTop = llmax(new_world_rect.mTop, new_world_rect.mBottom + 1);
     }
 
     if (mWorldViewRectRaw != new_world_rect)
