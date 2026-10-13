@@ -2228,227 +2228,271 @@ void LLViewerWindow::initGLDefaults()
 class RobotDollyWorkspaceView : public LLView
 {
 public:
-    enum Editor { WORLD = 0, CHAT = 1, INVENTORY = 2, EMPTY = 3 };
-    explicit RobotDollyWorkspaceView(const LLView::Params& params)
-        : LLView(params), mDivider(850), mSplitY(0), mSplitSide(-1),
-          mDragging(0), mOpenSide(-1)
+    enum Editor { WORLD, CHAT, INVENTORY, EMPTY };
+    struct Node
     {
-        mEditors[0] = WORLD;
-        mEditors[1] = CHAT;
-        mEditors[2] = EMPTY;
+        bool used = false;
+        bool split = false;
+        bool vertical = true; // true = side by side, false = above/below
+        S32 parent = -1;
+        S32 first = -1;
+        S32 second = -1;
+        S32 editor = EMPTY;
+        F32 fraction = 0.5f;
+    };
+
+    explicit RobotDollyWorkspaceView(const LLView::Params& p)
+        : LLView(p)
+    {
+        mNodes[0].used = true;
+        mNodes[0].split = true;
+        mNodes[0].vertical = true;
+        mNodes[0].first = 1;
+        mNodes[0].second = 2;
+        mNodes[0].fraction = 0.56f;
+        mNodes[1].used = true; mNodes[1].parent = 0; mNodes[1].editor = WORLD;
+        mNodes[2].used = true; mNodes[2].parent = 0; mNodes[2].editor = CHAT;
     }
 
-    void reshape(S32 width, S32 height, bool called_from_parent = true) override
+    LLRect nodeRect(S32 id) const
     {
-        const S32 old_width = getRect().getWidth();
-        const S32 old_height = getRect().getHeight();
-        if (old_width > 0 && width != old_width)
-            mDivider = ll_round((F32)mDivider * width / old_width);
-        if (old_height > 0 && height != old_height && mSplitSide >= 0)
-            mSplitY = ll_round((F32)mSplitY * height / old_height);
-        LLView::reshape(width, height, called_from_parent);
-        mDivider = constrainedDivider(mDivider);
-        mSplitY = llclamp(mSplitY, llmin(170, height / 2),
-                         llmax(llmin(170, height / 2), height - llmin(170, height / 2)));
+        LLRect r = getLocalRect();
+        S32 chain[64], count = 0;
+        for (S32 n = id; n > 0 && n < 63 && count < 63; n = mNodes[n].parent)
+            chain[count++] = n;
+        while (count)
+        {
+            const S32 child = chain[--count];
+            const Node& parent = mNodes[mNodes[child].parent];
+            if (parent.vertical)
+            {
+                const S32 mid = r.mLeft + ll_round(r.getWidth() * parent.fraction);
+                if (parent.first == child) r.mRight = mid;
+                else r.mLeft = mid;
+            }
+            else
+            {
+                const S32 mid = r.mBottom + ll_round(r.getHeight() * parent.fraction);
+                if (parent.first == child) r.mBottom = mid; // first is upper
+                else r.mTop = mid;
+            }
+        }
+        return r;
     }
 
-    S32 constrainedDivider(S32 desired) const
-    {
-        const S32 width = getRect().getWidth();
-        const S32 left_min = llmin(320, llmax(1, width / 2));
-        const S32 right_min = llmin(220, llmax(1, width - left_min));
-        return llclamp(desired, left_min, llmax(left_min, width - right_min));
-    }
-
-    S32 areaCount() const { return mSplitSide >= 0 ? 3 : 2; }
-    S32 editorAt(S32 side) const { return mEditors[side]; }
     S32 sideFor(S32 editor) const
     {
-        for (S32 i = 0; i < areaCount(); ++i)
-            if (mEditors[i] == editor) return i;
+        for (S32 i = 0; i < 63; ++i)
+            if (mNodes[i].used && !mNodes[i].split && mNodes[i].editor == editor)
+                return i;
         return -1;
     }
     bool hasWorld() const { return sideFor(WORLD) >= 0; }
-    LLRect areaRect(S32 side) const
+    LLRect editorDock(S32 id) const
     {
-        const LLRect bounds = getLocalRect();
-        const S32 column = side == 2 ? mSplitSide : side;
-        LLRect result = column == 0
-            ? LLRect(0, bounds.mTop, mDivider, bounds.mBottom)
-            : LLRect(mDivider, bounds.mTop, bounds.mRight, bounds.mBottom);
-        if (mSplitSide == column)
-        {
-            if (side == 2)
-                result.mTop = mSplitY;
-            else
-                result.mBottom = mSplitY;
-        }
-        return result;
-    }
-    LLRect editorDock(S32 side) const
-    {
-        const LLRect r = areaRect(side);
+        const LLRect r = nodeRect(id);
         return LLRect(r.mLeft + 5, r.mTop - 3, r.mRight - 5, r.mBottom + 4);
     }
     LLRect worldRect() const
     {
         const LLRect screen = calcScreenRect();
-        const S32 side = sideFor(WORLD);
-        if (side < 0) return LLRect(screen.mLeft, screen.mTop,
-                                     screen.mLeft + 1, screen.mTop - 1);
-        const LLRect r = areaRect(side);
+        const S32 id = sideFor(WORLD);
+        if (id < 0) return LLRect(screen.mLeft, screen.mBottom + 1,
+                                screen.mLeft + 1, screen.mBottom);
+        const LLRect r = nodeRect(id);
         return LLRect(screen.mLeft + r.mLeft, screen.mBottom + r.mTop,
                       screen.mLeft + r.mRight, screen.mBottom + r.mBottom);
     }
 
-    void chooseEditor(S32 side, S32 choice)
+    void chooseEditor(S32 id, S32 editor)
     {
-        if (side < 0 || side >= areaCount() || choice < WORLD || choice > EMPTY) return;
-        if (choice != EMPTY)
-            for (S32 i = 0; i < areaCount(); ++i)
-                if (i != side && mEditors[i] == choice) mEditors[i] = EMPTY;
-        mEditors[side] = choice;
+        if (id < 0 || id >= 63 || !mNodes[id].used || mNodes[id].split ||
+            editor < WORLD || editor > EMPTY) return;
+        if (editor != EMPTY)
+            for (S32 i = 0; i < 63; ++i)
+                if (i != id && mNodes[i].used && !mNodes[i].split &&
+                    mNodes[i].editor == editor) mNodes[i].editor = EMPTY;
+        mNodes[id].editor = editor;
         if (LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance())
             if (chat->getParent() == this) chat->setVisible(sideFor(CHAT) >= 0);
         if (LLFloater* inv = LLFloaterReg::findInstance("inventory"))
             if (inv->getParent() == this) inv->setVisible(sideFor(INVENTORY) >= 0);
     }
 
-    void splitArea(S32 side)
+    S32 freeNode() const
     {
-        if (mSplitSide >= 0 || side < 0 || side > 1) return;
-        mSplitSide = side;
-        mSplitY = getLocalRect().getHeight() / 2;
-        mEditors[2] = EMPTY;
-        mOpenSide = -1;
+        for (S32 i = 3; i < 63; ++i) if (!mNodes[i].used) return i;
+        return -1;
+    }
+    void splitArea(S32 id, bool vertical)
+    {
+        if (id < 0 || id >= 63 || !mNodes[id].used || mNodes[id].split) return;
+        const LLRect r = nodeRect(id);
+        if ((vertical && r.getWidth() < 440) || (!vertical && r.getHeight() < 360))
+            return;
+        const S32 first = freeNode();
+        if (first < 0) return;
+        mNodes[first].used = true;
+        const S32 second = freeNode();
+        if (second < 0) { mNodes[first] = Node(); return; }
+        const S32 previous = mNodes[id].editor;
+        mNodes[first] = Node();
+        mNodes[second] = Node();
+        mNodes[first].used = true; mNodes[first].parent = id;
+        mNodes[first].editor = previous;
+        mNodes[second].used = true; mNodes[second].parent = id;
+        mNodes[second].editor = EMPTY;
+        mNodes[id].split = true;
+        mNodes[id].vertical = vertical;
+        mNodes[id].first = first;
+        mNodes[id].second = second;
+        mNodes[id].fraction = 0.5f;
+        mNodes[id].editor = EMPTY;
+        mOpenNode = -1;
+    }
+    void joinArea(S32 id)
+    {
+        if (id < 0 || id >= 63 || !mNodes[id].used || mNodes[id].split) return;
+        const S32 parent = mNodes[id].parent;
+        if (parent < 0) return;
+        const S32 other = mNodes[parent].first == id
+            ? mNodes[parent].second : mNodes[parent].first;
+        // Only merge adjacent leaves for now; avoid destroying a whole subtree.
+        if (mNodes[other].split) return;
+        const S32 retained_editor = mNodes[id].editor;
+        mNodes[id] = Node();
+        mNodes[other] = Node();
+        const S32 grandparent = mNodes[parent].parent;
+        mNodes[parent] = Node();
+        mNodes[parent].used = true;
+        mNodes[parent].parent = grandparent;
+        mNodes[parent].editor = retained_editor;
+        mOpenNode = -1;
     }
 
     void draw() override
     {
-        const LLRect bounds = getLocalRect();
-        const LLColor4 border(0.65f, 0.70f, 0.77f, 1.f);
         const LLFontGL* font = LLFontGL::getFontSansSerif();
-        gl_rect_2d(bounds, border, false);
-        gl_rect_2d(LLRect(mDivider - 2, bounds.mTop, mDivider + 2, bounds.mBottom),
-                   border, true);
-        if (mSplitSide >= 0)
+        const LLColor4 border(0.65f, 0.70f, 0.77f, 1.f);
+        const char* names[] = { "WORLD", "CHAT", "INVENTORY", "EMPTY" };
+        for (S32 i = 0; i < 63; ++i)
         {
-            const LLRect r = areaRect(2);
-            gl_rect_2d(LLRect(r.mLeft, mSplitY + 2, r.mRight, mSplitY - 2),
-                       border, true);
-        }
-        for (S32 side = 0; side < areaCount(); ++side)
-        {
-            if (editorAt(side) == EMPTY)
+            if (!mNodes[i].used || mNodes[i].split) continue;
+            const LLRect r = nodeRect(i);
+            if (mNodes[i].editor == EMPTY)
             {
-                const LLRect r = areaRect(side);
                 gl_rect_2d(r, LLColor4(0.055f, 0.07f, 0.09f, 1.f), true);
                 font->renderUTF8("EMPTY EDITOR AREA", 0, r.mLeft + 14,
-                                 r.mTop - 65, border, LLFontGL::LEFT, LLFontGL::TOP);
+                    r.mTop - 65, border, LLFontGL::LEFT, LLFontGL::TOP);
             }
         }
         LLView::draw();
-        const char* names[] = { "WORLD", "CHAT", "INVENTORY", "EMPTY" };
-        for (S32 side = 0; side < areaCount(); ++side)
+        for (S32 i = 0; i < 63; ++i)
         {
-            const LLRect r = areaRect(side);
-            const S32 x = r.mLeft + 6;
-            const S32 top = r.mTop;
-            gl_rect_2d(LLRect(x, top - 34, x + 177, top - 5),
+            if (!mNodes[i].used || mNodes[i].split) continue;
+            const LLRect r = nodeRect(i);
+            gl_rect_2d(r, border, false);
+            const S32 x = r.mLeft + 6, top = r.mTop;
+            gl_rect_2d(LLRect(x, top - 34, x + 172, top - 5),
                        LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
-            font->renderUTF8(names[editorAt(side)], 0, x + 12, top - 11,
-                             LLColor4(1.f, 0.9f, 0.35f, 1.f),
-                             LLFontGL::LEFT, LLFontGL::TOP);
-            font->renderUTF8("v", 0, x + 157, top - 11,
-                             LLColor4(1.f, 0.9f, 0.35f, 1.f),
-                             LLFontGL::LEFT, LLFontGL::TOP);
-            if (mSplitSide < 0 && side < 2)
+            font->renderUTF8(names[mNodes[i].editor], 0, x + 10, top - 11,
+                       LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
+            font->renderUTF8("v", 0, x + 153, top - 11,
+                       LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
+            const char* actions[] = { "SPLIT H", "SPLIT V", "JOIN" };
+            for (S32 j = 0; j < 3; ++j)
             {
-                gl_rect_2d(LLRect(x + 184, top - 34, x + 256, top - 5),
+                const S32 bx = x + 177 + j * 78;
+                if (bx + 76 > r.mRight - 4) break;
+                gl_rect_2d(LLRect(bx, top - 34, bx + 76, top - 5),
                            LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
-                font->renderUTF8("SPLIT", 0, x + 190, top - 11,
-                                 LLColor4(1.f, 0.9f, 0.35f, 1.f),
-                                 LLFontGL::LEFT, LLFontGL::TOP);
+                font->renderUTF8(actions[j], 0, bx + 5, top - 11,
+                           LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
             }
-            if (mOpenSide == side)
-            {
-                for (S32 i = 0; i < 4; ++i)
+            if (mOpenNode == i)
+                for (S32 choice = 0; choice < 4; ++choice)
                 {
-                    const S32 row_top = top - 36 - i * 28;
-                    gl_rect_2d(LLRect(x, row_top, x + 177, row_top - 28),
-                               editorAt(side) == i ? LLColor4(0.25f, 0.30f, 0.37f, 1.f)
-                                                   : LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
-                    font->renderUTF8(names[i], 0, x + 12, row_top - 6,
-                                     LLColor4(1.f, 0.9f, 0.35f, 1.f),
-                                     LLFontGL::LEFT, LLFontGL::TOP);
+                    const S32 y = top - 36 - choice * 28;
+                    gl_rect_2d(LLRect(x, y, x + 172, y - 28),
+                               choice == mNodes[i].editor
+                                ? LLColor4(0.25f, 0.30f, 0.37f, 1.f)
+                                : LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
+                    font->renderUTF8(names[choice], 0, x + 10, y - 6,
+                           LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
                 }
-            }
         }
     }
 
     bool handleMouseDown(S32 x, S32 y, MASK mask) override
     {
-        if (mOpenSide >= 0)
+        if (mOpenNode >= 0)
         {
-            const LLRect menu = areaRect(mOpenSide);
-            const S32 mx = menu.mLeft + 6;
-            if (x >= mx && x <= mx + 177 &&
-                y <= menu.mTop - 36 && y >= menu.mTop - 148)
+            const LLRect r = nodeRect(mOpenNode);
+            const S32 xx = r.mLeft + 6;
+            if (x >= xx && x <= xx + 172 && y <= r.mTop - 36 && y >= r.mTop - 148)
             {
-                const S32 choice = (menu.mTop - 36 - y) / 28;
-                const S32 side = mOpenSide;
-                mOpenSide = -1;
-                chooseEditor(side, choice);
+                const S32 choice = (r.mTop - 36 - y) / 28;
+                const S32 id = mOpenNode;
+                mOpenNode = -1;
+                chooseEditor(id, choice);
                 return true;
             }
         }
-        for (S32 side = 0; side < areaCount(); ++side)
+        mOpenNode = -1;
+        for (S32 i = 0; i < 63; ++i)
         {
-            const LLRect r = areaRect(side);
-            const S32 x0 = r.mLeft + 6;
+            if (!mNodes[i].used || mNodes[i].split) continue;
+            const LLRect r = nodeRect(i);
+            const S32 xx = r.mLeft + 6;
             if (y <= r.mTop - 5 && y >= r.mTop - 34)
             {
-                if (x >= x0 && x <= x0 + 177)
+                if (x >= xx && x <= xx + 172) { mOpenNode = i; return true; }
+                for (S32 j = 0; j < 3; ++j)
                 {
-                    mOpenSide = mOpenSide == side ? -1 : side;
-                    return true;
-                }
-                if (mSplitSide < 0 && side < 2 &&
-                    x >= x0 + 184 && x <= x0 + 256)
-                {
-                    splitArea(side);
-                    return true;
+                    const S32 bx = xx + 177 + j * 78;
+                    if (bx + 76 > r.mRight - 4) break;
+                    if (x >= bx && x <= bx + 76)
+                    {
+                        if (j == 0) splitArea(i, false); // upper/lower
+                        if (j == 1) splitArea(i, true);  // left/right
+                        if (j == 2) joinArea(i);
+                        return true;
+                    }
                 }
             }
         }
-        mOpenSide = -1;
-        if (mSplitSide >= 0)
+        for (S32 i = 0; i < 63; ++i)
         {
-            const LLRect r = areaRect(2);
-            if (x >= r.mLeft && x <= r.mRight && y >= mSplitY - 9 && y <= mSplitY + 9)
+            const Node& n = mNodes[i];
+            if (!n.used || !n.split) continue;
+            const LLRect r = nodeRect(i);
+            const S32 mid = n.vertical
+                ? r.mLeft + ll_round(r.getWidth() * n.fraction)
+                : r.mBottom + ll_round(r.getHeight() * n.fraction);
+            if (n.vertical
+                ? (abs(x - mid) <= 9 && y >= r.mBottom && y <= r.mTop)
+                : (abs(y - mid) <= 9 && x >= r.mLeft && x <= r.mRight))
             {
-                mDragging = 2;
+                mDragNode = i;
                 gFocusMgr.setMouseCapture(this);
                 return true;
             }
-        }
-        if (x >= mDivider - 10 && x <= mDivider + 10)
-        {
-            mDragging = 1;
-            gFocusMgr.setMouseCapture(this);
-            return true;
         }
         return LLView::handleMouseDown(x, y, mask);
     }
 
     bool handleHover(S32 x, S32 y, MASK mask) override
     {
-        if (mDragging == 1) { mDivider = constrainedDivider(x); return true; }
-        if (mDragging == 2)
+        if (mDragNode >= 0)
         {
-            const S32 h = getLocalRect().getHeight();
-            const S32 margin = llmin(170, h / 2);
-            mSplitY = llclamp(y, margin, llmax(margin, h - margin));
+            Node& n = mNodes[mDragNode];
+            const LLRect r = nodeRect(mDragNode);
+            const S32 length = n.vertical ? r.getWidth() : r.getHeight();
+            const S32 pos = n.vertical ? x - r.mLeft : r.mTop - y;
+            const S32 minpx = llmin(170, length / 2);
+            if (length > 0)
+                n.fraction = llclamp((F32)pos / length,
+                                    (F32)minpx / length, 1.f - (F32)minpx / length);
             return true;
         }
         return LLView::handleHover(x, y, mask);
@@ -2456,10 +2500,10 @@ public:
 
     bool handleMouseUp(S32 x, S32 y, MASK mask) override
     {
-        if (mDragging)
+        if (mDragNode >= 0)
         {
             handleHover(x, y, mask);
-            mDragging = 0;
+            mDragNode = -1;
             gFocusMgr.setMouseCapture(nullptr);
             return true;
         }
@@ -2467,12 +2511,9 @@ public:
     }
 
 private:
-    S32 mDivider;
-    S32 mSplitY;
-    S32 mSplitSide;
-    S32 mDragging;
-    S32 mEditors[3];
-    S32 mOpenSide;
+    Node mNodes[63];
+    S32 mOpenNode = -1;
+    S32 mDragNode = -1;
 };
 
 static RobotDollyWorkspaceView* sRobotDollyWorkspace = nullptr;
