@@ -2970,23 +2970,25 @@ void LLViewerWindow::drawDebugText()
 
 void LLViewerWindow::draw()
 {
-    // ROBOT DOLLY: keep the existing Conversations floater in the chat area.
+    // ROBOT DOLLY experimental dock: parent existing Conversations under workspace.
     if (sRobotDollyWorkspace)
     {
-        LLFloaterIMContainer* conversations = LLFloaterIMContainer::findInstance();
-        if (conversations && conversations->getVisible() && conversations->getParent())
+        LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance();
+        if (chat && chat->getVisible())
         {
-            LLRect target;
-            conversations->getParent()->screenRectToLocal(
-                sRobotDollyWorkspace->chatRect(), &target);
-            if (target.getWidth() >= 300 && target.getHeight() >= 180 &&
-                conversations->getRect() != target)
+            const LLRect area = sRobotDollyWorkspace->getLocalRect();
+            const S32 divider = sRobotDollyWorkspace->worldRect().getWidth();
+            const LLRect dock(divider + 5, area.mTop - 3,
+                              area.mRight - 5, area.mBottom + 4);
+            if (dock.getWidth() >= 280 && dock.getHeight() >= 180)
             {
-                conversations->setRect(target);
+                if (chat->getParent() != sRobotDollyWorkspace)
+                    sRobotDollyWorkspace->addChild(chat);
+                if (chat->getRect() != dock)
+                    chat->setRect(dock);
             }
         }
     }
-
 
 //#if LL_DEBUG
     LLView::sIsDrawing = true;
