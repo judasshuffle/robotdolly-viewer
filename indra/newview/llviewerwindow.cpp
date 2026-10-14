@@ -2370,8 +2370,23 @@ public:
         mOpenNode = -1;
     }
 
-    // Phase 1: prove we can create and dismiss a native window without
-    // disturbing the viewer's shared OpenGL context.  NOT a rendered world yet.
+    // A dedicated window class keeps the pop-out's close action independent
+    // of the viewer's main window and its quit/message handling.
+#if LL_WINDOWS
+    static LRESULT CALLBACK popOutWindowProc(HWND hwnd, UINT message,
+                                              WPARAM wparam, LPARAM lparam)
+    {
+        if (message == WM_CLOSE)
+        {
+            // Do not destroy the test window (or exit the viewer).
+            ShowWindow(hwnd, SW_HIDE);
+            return 0;
+        }
+        return DefWindowProcW(hwnd, message, wparam, lparam);
+    }
+#endif
+
+    // Phase 1 only: native test window; world rendering is NOT connected.
     void popOutTest()
     {
 #if LL_WINDOWS
@@ -2381,16 +2396,27 @@ public:
             SetForegroundWindow(mPopOutWindow);
             return;
         }
+        const HINSTANCE instance = GetModuleHandleW(nullptr);
+        const wchar_t* class_name = L"RobotDollyWorldPopOutTest";
+        WNDCLASSW wc = {};
+        wc.lpfnWndProc = &RobotDollyWorkspaceView::popOutWindowProc;
+        wc.hInstance = instance;
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.lpszClassName = class_name;
+        if (!RegisterClassW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
+        {
+            return;
+        }
         mPopOutWindow = CreateWindowExW(
-            0, L"STATIC", L"ROBOTDOLLY - World Pop Out (test)",
-            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            0, class_name,
+            L"ROBOTDOLLY - World Pop Out (rendering not connected yet)",
+            WS_OVERLAPPEDWINDOW,
             CW_USEDEFAULT, CW_USEDEFAULT, 800, 520,
-            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+            nullptr, nullptr, instance, nullptr);
         if (mPopOutWindow)
         {
-            SetWindowTextW(mPopOutWindow,
-                L"ROBOTDOLLY - World Pop Out (rendering not connected yet)");
             ShowWindow(mPopOutWindow, SW_SHOWNORMAL);
+            UpdateWindow(mPopOutWindow);
         }
 #endif
     }
