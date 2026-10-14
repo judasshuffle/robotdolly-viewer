@@ -2376,6 +2376,7 @@ public:
     static LRESULT CALLBACK popOutWindowProc(HWND hwnd, UINT message,
                                               WPARAM wparam, LPARAM lparam)
     {
+        if (message == WM_CLOSE) { MessageBoxW(hwnd, L"Pop-out WM_CLOSE received!", L"ROBOTDOLLY DEBUG", MB_OK); }
         if (message == WM_CLOSE)
         {
             // Do not destroy the test window (or exit the viewer).
