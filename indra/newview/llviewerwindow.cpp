@@ -26,6 +26,7 @@
 
 #include "llviewerprecompiledheaders.h"
 #include "llviewerwindow.h"
+#include "llrobotdollyai.h"
 #include "llfloaterimcontainer.h"
 
 
@@ -3053,6 +3054,7 @@ void LLViewerWindow::shutdownGL()
 // shutdownViews() and shutdownGL() need to be called first
 LLViewerWindow::~LLViewerWindow()
 {
+    stopRobotDollyAI();
     LL_INFOS() << "Destroying Window" << LL_ENDL;
     destroyWindow();
 
@@ -4090,6 +4092,7 @@ void append_xui_tooltip(LLView* viewp, LLToolTip::Params& params)
 // event processing.
 void LLViewerWindow::updateUI()
 {
+    updateRobotDollyAI();
     LL_PROFILE_ZONE_SCOPED_CATEGORY_UI;
 
     static std::string last_handle_msg;

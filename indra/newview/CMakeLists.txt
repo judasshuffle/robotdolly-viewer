@@ -718,6 +718,8 @@ set(viewer_SOURCE_FILES
     llviewertexturelist.cpp
     llviewerthrottle.cpp
     llviewerwearable.cpp
+    llrobotdollyai.cpp
+    robotdolly/ai/viewport.cpp
     llviewerwindow.cpp
     llviewerwindowlistener.cpp
     llvlcomposition.cpp
@@ -1822,6 +1824,8 @@ list(APPEND EVENT_HOST_SCRIPTS ${EVENT_HOST_SCRIPT_GLOB_LIST})
 
 set(PACKAGE ON CACHE BOOL
     "Add a package target that builds an installer package.")
+
+set_source_files_properties(robotdolly/ai/viewport.cpp PROPERTIES SKIP_PRECOMPILE_HEADERS TRUE)
 
 if(USE_PRECOMPILED_HEADERS)
   target_precompile_headers( ${VIEWER_BINARY_NAME} PRIVATE llviewerprecompiledheaders.h )

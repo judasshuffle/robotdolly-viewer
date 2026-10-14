@@ -451,4 +451,12 @@
       parameter="advanced" />
   </button>
 
+  <check_box control_name="RobotDollyAIEnabled" name="RobotDollyAIEnabled"
+    label="AI window enhancement (experimental)" layout="topleft"
+    left="10" top="402" width="300" height="18"
+    tool_tip="Processes the whole window, including chat and menus. Requires a configured DLSS Sidecar renderer. Off at each login." />
+  <button name="RobotDollyAIChoose" label="Choose renderer..." layout="topleft"
+    left="325" top="400" width="175" height="23" />
+  <text name="RobotDollyAIStatus" layout="topleft" left="10" top="425"
+    width="490" height="13" font="SansSerifSmall" use_ellipses="true">AI enhancement is off.</text>
 </panel>

@@ -1,0 +1,163 @@
+name: ROBOTDOLLY AI prototype
+'on':
+  push:
+    branches:
+    - experiment/ai-viewport
+  workflow_dispatch: {}
+permissions:
+  contents: read
+jobs:
+  control-tests:
+    runs-on: windows-2022
+    steps:
+    - uses: actions/checkout@v7
+    - name: Configure controller tests
+      run: cmake -S indra/newview/robotdolly/ai -B build-ai-control -A x64
+    - name: Build controller tests
+      run: cmake --build build-ai-control --config Release
+    - name: Run controller lifecycle tests (no GPU inference)
+      run: ctest --test-dir build-ai-control -C Release --output-on-failure
+  viewer:
+    strategy:
+      matrix:
+        runner:
+        - windows-2022
+        configuration:
+        - ReleaseOS
+        build_variant:
+        - Viewer
+    runs-on: ${{ matrix.runner }}
+    env:
+      AUTOBUILD_ADDRSIZE: 64
+      AUTOBUILD_BUILD_ID: ${{ github.run_id }}
+      AUTOBUILD_CONFIGURATION: ${{ matrix.configuration }}
+      AUTOBUILD_GITHUB_TOKEN: ${{ github.token }}
+      AUTOBUILD_INSTALLABLE_CACHE: ${{ github.workspace }}/.autobuild-installables
+      AUTOBUILD_VARIABLES_FILE: ${{ github.workspace }}/.build-variables/variables
+      AUTOBUILD_VCS_INFO: 'true'
+      AUTOBUILD_VSVER: '170'
+      DEVELOPER_DIR: /Applications/Xcode_26.3.app/Contents/Developer
+      BUGSPLAT_DB: ''
+      build_log_dir: ${{ github.workspace }}/.logs
+      build_viewer: ${{ matrix.build_variant == 'Viewer' }}
+      build_tests: ${{ matrix.build_variant == 'Tests' }}
+      BUILDSCRIPTS_SHARED: ${{ github.workspace }}/.shared
+      BUILDSCRIPTS_SUPPORT_FUNCTIONS: ${{ github.workspace }}/buildscripts_support_functions
+      GIT_REF: ${{ github.head_ref || github.ref }}
+      LL_SKIP_REQUIRE_SYSROOT: 1
+      LOGFAIL: DEBUG
+      master_message_template_checkout: ${{ github.workspace }}/.master-message-template
+      variants: ${{ matrix.configuration }}
+      autobuild_configure_parameters: -- -DUSE_VELOPACK:BOOL=OFF
+      RELEASE_CRASH_REPORTING: 'OFF'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+      with:
+        ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    - name: Setup python
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.11'
+    - name: Checkout build variables
+      uses: actions/checkout@v7
+      with:
+        repository: secondlife/build-variables
+        ref: master
+        path: .build-variables
+    - name: Checkout master-message-template
+      uses: actions/checkout@v7
+      with:
+        repository: secondlife/master-message-template
+        path: .master-message-template
+    - name: Install autobuild and python dependencies
+      run: pip3 install autobuild llsd
+    - name: Cache autobuild packages
+      id: cache-installables
+      uses: actions/cache@v6
+      with:
+        path: .autobuild-installables
+        key: ${{ runner.os }}-64-${{ matrix.configuration }}-${{ matrix.build_variant }}-${{ hashFiles('autobuild.xml') }}
+        restore-keys: '${{ runner.os }}-64-${{ matrix.configuration }}-${{ matrix.build_variant }}-
+
+          ${{ runner.os }}-64-${{ matrix.configuration }}-
+
+          ${{ runner.os }}-64-
+
+          '
+    - name: Determine source branch
+      id: which-branch
+      uses: secondlife/viewer-build-util/which-branch@v2
+      with:
+        token: ${{ github.token }}
+    - name: Build
+      id: build
+      shell: bash
+      env:
+        AUTOBUILD_VCS_BRANCH: ${{ steps.which-branch.outputs.branch }}
+        RUNNER_OS: ${{ runner.os }}
+      run: "# set up things the viewer's build.sh script expects\nset -x\nmkdir -p \"$build_log_dir\"\nmkdir -p \"$BUILDSCRIPTS_SHARED/packages/lib/python\"\
+        \nsource \"$BUILDSCRIPTS_SUPPORT_FUNCTIONS\"\nif [[ \"$OSTYPE\" =~ cygwin|msys ]]\nthen\n  native_path() { cygpath\
+        \ --windows \"$1\"; }\n  shell_path()  { cygpath --unix \"$1\"; }\nelse\n  native_path() { echo \"$1\"; }\n  shell_path()\
+        \  { echo \"$1\"; }\nfi\nfinalize()\n{\n  case \"$1\" in\n    true|0)\n      record_success \"Build Succeeded\"\n\
+        \      ;;\n    *)\n      record_failure \"Build Failed with $1\"\n      ;;\n  esac\n}\ninitialize_build()\n{\n  echo\
+        \ \"initialize_build\"\n}\ninitialize_version()\n{\n  export revision=\"$AUTOBUILD_BUILD_ID\"\n}\npython_cmd()\n{\n\
+        \    if [[ \"x${1:0:1}\" == \"x-\" ]]    # -m, -c, etc.\n    then # if $1 is a switch, don't try to twiddle paths\n\
+        \         \"$(shell_path \"$PYTHON_COMMAND\")\" \"$@\"\n    elif [[ \"$(basename \"$1\")\" == \"codeticket.py\" ]]\n\
+        \    then # ignore any attempt to contact codeticket\n         echo \"## $@\"\n    else # running a script at an explicit\
+        \ path: fix path for Python\n         local script=\"$1\"\n         shift\n         \"$(shell_path \"$PYTHON_COMMAND\"\
+        )\" \"$(native_path \"$script\")\" \"$@\"\n    fi\n}\nrepo_branch()\n{\n  echo \"$AUTOBUILD_VCS_BRANCH\"\n}\nrecord_dependencies_graph()\n\
+        {\n  echo \"TODO: generate and post dependency graph\"\n}\n# Since we're not uploading to codeticket, DO NOT sleep\
+        \ for minutes.\nsleep()\n{\n  echo \"Not sleeping for $1 seconds\"\n}\nexport -f native_path shell_path finalize initialize_build\
+        \ initialize_version\nexport -f python_cmd repo_branch record_dependencies_graph sleep\n## Useful for diagnosing Windows\
+        \ LLProcess/LLLeap test failures\n##export APR_LOG=\"${RUNNER_TEMP}/apr.log\"\nexport arch=$(uname | cut -b-6)\n#\
+        \ Surprise! GH Windows runner's MINGW6 is a $arch value we've never\n# seen before, so numerous tests don't know about\
+        \ it.\n[[ \"$arch\" == \"MINGW6\" ]] && arch=CYGWIN\nexport AUTOBUILD=\"$(which autobuild)\"\n\n# determine the viewer\
+        \ channel from the branch or tag name\n# trigger an EDU build by including \"edu\" in the tag\nedu=${{ github.ref_type\
+        \ == 'tag' && contains(github.ref_name, 'edu') }}\necho \"ref_type=${{ github.ref_type }}, ref_name=${{ github.ref_name\
+        \ }}, edu='$edu'\"\nbranch=$AUTOBUILD_VCS_BRANCH\nif [[ \"$edu\" == \"true\" ]]\nthen\n    export viewer_channel=\"\
+        Second Life Release edu\"\nelif  [[ \"$branch\" == \"develop\" ]];\nthen\n    export viewer_channel=\"Second Life\
+        \ Develop\"\nelse\n    IFS='/' read -ra ba <<< \"$branch\"\n    prefix=${ba[0]}\n    if [ \"$prefix\" == \"project\"\
+        \ ]; then\n        IFS='_' read -ra prj <<< \"${ba[1]}\"\n        prj_str=\"${prj[*]}\"\n        # uppercase first\
+        \ letter of each word\n        capitalized=$(echo \"$prj_str\" | awk '{for (i=1; i<=NF; i++) $i = toupper(substr($i,1,1))\
+        \ substr($i,2); print}')\n        export viewer_channel=\"Second Life Project $capitalized\"\n    elif  [[ \"$prefix\"\
+        \ == \"release\" || \"$prefix\" == \"main\" ]];\n    then\n        export viewer_channel=\"Second Life Release\"\n\
+        \    else\n        export viewer_channel=\"Second Life Test\"\n    fi\nfi\nexport viewer_channel=\"ROBOTDOLLY Viewer\
+        \ AI Prototype\"\necho \"viewer_channel=$viewer_channel\"\necho \"viewer_channel=$viewer_channel\" >> \"$GITHUB_OUTPUT\"\
+        \n# On windows we need to point the build to the correct python\n# as neither CMake's FindPython nor our custom Python.cmake\
+        \ module\n# will resolve the correct interpreter location.\nif [[ \"$RUNNER_OS\" == \"Windows\" ]]; then\n  export\
+        \ PYTHON=\"$(native_path \"$(which python)\")\"\n  echo \"Python location: $PYTHON\"\n  export PYTHON_COMMAND=\"$PYTHON\"\
+        \nelse\n  export PYTHON_COMMAND=\"python3\"\nfi\nexport PYTHON_COMMAND_NATIVE=\"$(native_path \"$PYTHON_COMMAND\"\
+        )\"\n\n./build.sh\n\n# Each artifact is downloaded as a distinct .zip file. Multiple jobs\n# (per the matrix above)\
+        \ writing the same filepath to the same\n# artifact name will *overwrite* that file. Moreover, they can\n# interfere\
+        \ with each other, causing the upload to fail.\n# https://github.com/actions/upload-artifact#uploading-to-the-same-artifact\n\
+        # Given the size of our installers, and the fact that we typically\n# only want to download just one instead of a\
+        \ single zip containing\n# several, generate a distinct artifact name for each installer.\n# If the matrix above can\
+        \ run multiple builds on the same\n# platform, we must disambiguate on more than the platform name.\n# e.g. if we\
+        \ were still running Windows 32-bit builds, we'd need to\n# qualify the artifact with bit width.\nif [[ \"$AUTOBUILD_CONFIGURATION\"\
+        \ == \"ReleaseOS\" ]]\nthen cfg_suffix='OS'\nelse cfg_suffix=''\nfi\necho \"artifact=$RUNNER_OS$cfg_suffix\" >> $GITHUB_OUTPUT\n"
+    - name: Upload executable
+      if: matrix.build_variant == 'Viewer' && steps.build.outputs.viewer_app
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ steps.build.outputs.artifact }}-app
+        path: '${{ steps.build.outputs.viewer_app }}
+
+          '
+    - name: Upload metadata
+      uses: actions/upload-artifact@v7
+      if: matrix.build_variant == 'Viewer'
+      with:
+        name: ${{ steps.build.outputs.artifact }}-metadata
+        path: '${{ steps.build.outputs.metadata }}
+
+          '
+    - name: Upload build logs
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: windows-ai-build-logs
+        path: .logs/
+        if-no-files-found: ignore
+    needs: control-tests
+    timeout-minutes: 90

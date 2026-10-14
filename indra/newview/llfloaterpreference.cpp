@@ -96,6 +96,8 @@
 #include "llspinctrl.h"
 #include "llstartup.h"
 #include "lltextbox.h"
+#include "llrobotdollyai.h"
+#include "llviewermenufile.h"
 #include "llui.h"
 #include "llviewerobjectlist.h"
 #include "llvovolume.h"
@@ -2462,6 +2464,19 @@ static LLPanelInjector<LLPanelPreferencePrivacy> t_pref_privacy("panel_preferenc
 
 bool LLPanelPreferenceGraphics::postBuild()
 {
+    getChild<LLButton>("RobotDollyAIChoose")->setClickedCallback([](LLUICtrl*, const LLSD&) {
+        gSavedSettings.setBOOL("RobotDollyAIEnabled", false);
+        stopRobotDollyAI();
+        LLFilePickerReplyThread::startPicker(
+            [](const std::vector<std::string>& files, LLFilePicker::ELoadFilter, LLFilePicker::ESaveFilter) {
+                if (!files.empty()) gSavedSettings.setString("RobotDollyAIRenderer", files.front());
+            }, LLFilePicker::FFLOAD_EXE, false);
+    });
+#if !LL_WINDOWS
+    getChild<LLUICtrl>("RobotDollyAIEnabled")->setEnabled(false);
+    getChild<LLUICtrl>("RobotDollyAIChoose")->setEnabled(false);
+#endif
+
     LLFloaterReg::showInstance("prefs_graphics_advanced");
     LLFloaterReg::hideInstance("prefs_graphics_advanced");
 
@@ -2477,6 +2492,10 @@ bool LLPanelPreferenceGraphics::postBuild()
 
 void LLPanelPreferenceGraphics::draw()
 {
+    auto* status = getChild<LLTextBox>("RobotDollyAIStatus");
+    status->setText(robotDollyAIStatus());
+    status->setToolTip(robotDollyAIStatus());
+
     LLPanelPreference::draw();
 }
 
