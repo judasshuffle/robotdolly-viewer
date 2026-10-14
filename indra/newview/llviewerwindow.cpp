@@ -2370,6 +2370,31 @@ public:
         mOpenNode = -1;
     }
 
+    // Phase 1: prove we can create and dismiss a native window without
+    // disturbing the viewer's shared OpenGL context.  NOT a rendered world yet.
+    void popOutTest()
+    {
+#if LL_WINDOWS
+        if (mPopOutWindow && IsWindow(mPopOutWindow))
+        {
+            ShowWindow(mPopOutWindow, SW_RESTORE);
+            SetForegroundWindow(mPopOutWindow);
+            return;
+        }
+        mPopOutWindow = CreateWindowExW(
+            0, L"STATIC", L"ROBOTDOLLY - World Pop Out (test)",
+            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            CW_USEDEFAULT, CW_USEDEFAULT, 800, 520,
+            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (mPopOutWindow)
+        {
+            SetWindowTextW(mPopOutWindow,
+                L"ROBOTDOLLY - World Pop Out (rendering not connected yet)");
+            ShowWindow(mPopOutWindow, SW_SHOWNORMAL);
+        }
+#endif
+    }
+
     void draw() override
     {
         const LLFontGL* font = LLFontGL::getFontSansSerif();
@@ -2411,11 +2436,12 @@ public:
             }
             if (mOpenArea == i)
             {
-                const char* actions[] = { "SPLIT H", "SPLIT V", "JOIN" };
-                for (S32 j = 0; j < 3; ++j)
+                const char* actions[] = { "SPLIT H", "SPLIT V", "JOIN", "POP OUT TEST" };
+                const S32 action_count = mNodes[i].editor == WORLD ? 4 : 3;
+                for (S32 j = 0; j < action_count; ++j)
                 {
                     const S32 y = top - 36 - j * 28;
-                    gl_rect_2d(LLRect(ax, y, ax + 110, y - 28),
+                    gl_rect_2d(LLRect(ax, y, ax + 140, y - 28),
                                LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
                     font->renderUTF8(actions[j], 0, ax + 7, y - 6,
                                      LLColor4(1.f, 0.9f, 0.35f, 1.f),
@@ -2489,8 +2515,9 @@ public:
         {
             const LLRect r = nodeRect(mOpenArea);
             const S32 ax = r.mLeft + 183;
-            if (x >= ax && x <= ax + 110 &&
-                y <= r.mTop - 36 && y >= r.mTop - 120)
+            const S32 action_count = mNodes[mOpenArea].editor == WORLD ? 4 : 3;
+            if (x >= ax && x <= ax + 140 &&
+                y <= r.mTop - 36 && y >= r.mTop - 36 - action_count * 28)
             {
                 const S32 action = (r.mTop - 36 - y) / 28;
                 const S32 id = mOpenArea;
@@ -2498,6 +2525,7 @@ public:
                 if (action == 0) splitArea(id, false);
                 if (action == 1) splitArea(id, true);
                 if (action == 2) joinArea(id);
+                if (action == 3 && mNodes[id].editor == WORLD) popOutTest();
                 return true;
             }
         }
@@ -2583,6 +2611,9 @@ private:
     S32 mEditorCategory = -1;
     S32 mOpenArea = -1;
     S32 mDragNode = -1;
+#if LL_WINDOWS
+    HWND mPopOutWindow = nullptr;
+#endif
 };
 
 static RobotDollyWorkspaceView* sRobotDollyWorkspace = nullptr;
