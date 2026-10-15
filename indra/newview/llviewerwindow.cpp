@@ -2229,7 +2229,49 @@ void LLViewerWindow::initGLDefaults()
 class RobotDollyWorkspaceView : public LLView
 {
 public:
-    enum Editor { WORLD, CHAT, INVENTORY, EMPTY };
+    enum Editor { WORLD, CHAT, INVENTORY, EMPTY, PEOPLE, FRIENDS, GROUPS,
+                  MINI_MAP, WORLD_MAP, CAMERA, EDITOR_COUNT };
+    struct PanelEntry
+    {
+        const char* label;
+        const char* floater;
+        const char* tab;
+        S32 category;
+        bool favourite;
+    };
+    static const PanelEntry& panelEntry(S32 editor)
+    {
+        // One catalogue drives menu labels, categories and native window lookup.
+        static const PanelEntry entries[] = {
+            { "WORLD", "", "", 1, true },
+            { "CONVERSATIONS", "im_container", "", 2, true },
+            { "INVENTORY", "inventory", "", 3, true },
+            { "EMPTY", "", "", 5, false },
+            { "PEOPLE", "people", "nearby_panel", 2, false },
+            { "FRIENDS", "people", "friends_panel", 2, false },
+            { "GROUPS", "people", "groups_panel", 2, false },
+            { "MINI-MAP", "mini_map", "", 1, true },
+            { "WORLD MAP", "world_map", "", 1, false },
+            { "CAMERA", "camera", "", 4, false }
+        };
+        static_assert(sizeof(entries) / sizeof(entries[0]) == EDITOR_COUNT);
+        return entries[editor];
+    }
+    std::vector<S32> menuEditors() const
+    {
+        std::vector<S32> result;
+        for (S32 editor = 0; editor < EDITOR_COUNT; ++editor)
+            if (mEditorCategory == 0 ? panelEntry(editor).favourite
+                                    : panelEntry(editor).category == mEditorCategory)
+                result.push_back(editor);
+        return result;
+    }
+    struct DockedPanel
+    {
+        LLHandle<LLFloater> floater;
+        LLHandle<LLView> parent;
+        LLRect rect;
+    };
     struct Node
     {
         bool used = false;
@@ -2308,16 +2350,77 @@ public:
     void chooseEditor(S32 id, S32 editor)
     {
         if (id < 0 || id >= 63 || !mNodes[id].used || mNodes[id].split ||
-            editor < WORLD || editor > EMPTY) return;
+            editor < WORLD || editor >= EDITOR_COUNT) return;
+        const PanelEntry& entry = panelEntry(editor);
         if (editor != EMPTY)
             for (S32 i = 0; i < 63; ++i)
                 if (i != id && mNodes[i].used && !mNodes[i].split &&
-                    mNodes[i].editor == editor) mNodes[i].editor = EMPTY;
+                    (mNodes[i].editor == editor ||
+                     (entry.floater[0] && std::string(panelEntry(mNodes[i].editor).floater) == entry.floater)))
+                    mNodes[i].editor = EMPTY;
         mNodes[id].editor = editor;
+        // Release an old People tab before opening the newly selected tab.
+        releaseUnusedPanels();
+        if (entry.floater[0])
+        {
+            LLSD key;
+            if (entry.tab[0]) key["people_panel_tab_name"] = entry.tab;
+            LLFloaterReg::showInstance(entry.floater, key);
+        }
         if (LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance())
             if (chat->getParent() == this) chat->setVisible(sideFor(CHAT) >= 0);
         if (LLFloater* inv = LLFloaterReg::findInstance("inventory"))
             if (inv->getParent() == this) inv->setVisible(sideFor(INVENTORY) >= 0);
+    }
+
+    void releaseUnusedPanels()
+    {
+        for (S32 editor = PEOPLE; editor < EDITOR_COUNT; ++editor)
+        {
+            DockedPanel& saved = mDockedPanels[editor];
+            LLFloater* floater = saved.floater.get();
+            if (!floater || sideFor(editor) >= 0) continue;
+            if (floater->getParent() == this)
+            {
+                if (LLView* parent = saved.parent.get()) parent->addChild(floater);
+                floater->reshape(saved.rect.getWidth(), saved.rect.getHeight());
+                floater->setRect(saved.rect);
+                floater->closeFloater(); // Includes camera cleanup.
+            }
+            saved = DockedPanel();
+        }
+    }
+
+    void syncPanels()
+    {
+        releaseUnusedPanels();
+        for (S32 editor = PEOPLE; editor < EDITOR_COUNT; ++editor)
+        {
+            const S32 id = sideFor(editor);
+            if (id < 0) continue;
+            LLFloater* floater = LLFloaterReg::findInstance(panelEntry(editor).floater);
+            if (!floater) continue;
+            if (!floater->getVisible())
+            {
+                mNodes[id].editor = EMPTY; // Native close button also undocks.
+                continue;
+            }
+            DockedPanel& saved = mDockedPanels[editor];
+            if (floater->getParent() != this)
+            {
+                saved.floater = floater->getHandle();
+                saved.parent = floater->getParent()->getHandle();
+                saved.rect = floater->getRect();
+                addChild(floater);
+            }
+            LLRect dock = editorDock(id);
+            dock.mTop -= 34; // Keep the panel chooser above the native title bar.
+            if (dock.getWidth() > 0 && dock.getHeight() > 0 && floater->getRect() != dock)
+            {
+                floater->reshape(dock.getWidth(), dock.getHeight());
+                floater->setRect(dock);
+            }
+        }
     }
 
     S32 freeNode() const
@@ -2427,7 +2530,6 @@ public:
     {
         const LLFontGL* font = LLFontGL::getFontSansSerif();
         const LLColor4 border(0.65f, 0.70f, 0.77f, 1.f);
-        const char* names[] = { "WORLD", "CHAT", "INVENTORY", "EMPTY" };
         for (S32 i = 0; i < 63; ++i)
         {
             if (!mNodes[i].used || mNodes[i].split) continue;
@@ -2448,7 +2550,7 @@ public:
             const S32 x = r.mLeft + 6, top = r.mTop;
             gl_rect_2d(LLRect(x, top - 34, x + 172, top - 5),
                        LLColor4(0.12f, 0.15f, 0.20f, 1.f), true);
-            font->renderUTF8(names[mNodes[i].editor], 0, x + 10, top - 11,
+            font->renderUTF8(panelEntry(mNodes[i].editor).label, 0, x + 10, top - 11,
                        LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
             font->renderUTF8("v", 0, x + 153, top - 11,
                        LLColor4(1.f, 0.9f, 0.35f, 1.f), LLFontGL::LEFT, LLFontGL::TOP);
@@ -2480,11 +2582,9 @@ public:
             {
                 // Two-level editor menu: short categories first, real editor
                 // choices second. Only implemented editors are selectable.
-                const char* categories[] = { "FAVOURITES >", "WORLD & BUILD >", "COMMUNICATION >", "INVENTORY >", "OTHER >" };
-                const S32 favouriteEditors[] = { WORLD, CHAT, INVENTORY };
-                const S32 categoryEditors[] = { WORLD, WORLD, CHAT, INVENTORY, EMPTY };
-                const S32 count = mEditorCategory < 0 ? 5 :
-                    mEditorCategory == 0 ? 4 : 2; // Back plus 1-3 entries
+                const char* categories[] = { "FAVOURITES >", "WORLD & MAPS >", "COMMUNICATION >", "INVENTORY >", "PHOTOGRAPHY >", "OTHER >" };
+                const auto editors = menuEditors();
+                const S32 count = mEditorCategory < 0 ? 6 : (S32)editors.size() + 1;
                 for (S32 row = 0; row < count; ++row)
                 {
                     const S32 y = top - 36 - row * 28;
@@ -2494,9 +2594,8 @@ public:
                     else if (row == 0) label = "< BACK";
                     else
                     {
-                        choice = mEditorCategory == 0
-                            ? favouriteEditors[row - 1] : categoryEditors[mEditorCategory];
-                        label = names[choice];
+                        choice = editors[row - 1];
+                        label = panelEntry(choice).label;
                     }
                     gl_rect_2d(LLRect(x, y, x + 172, y - 28),
                                choice == mNodes[i].editor
@@ -2515,7 +2614,8 @@ public:
         {
             const LLRect r = nodeRect(mOpenNode);
             const S32 xx = r.mLeft + 6;
-            const S32 count = mEditorCategory < 0 ? 5 : mEditorCategory == 0 ? 4 : 2;
+            const auto editors = menuEditors();
+            const S32 count = mEditorCategory < 0 ? 6 : (S32)editors.size() + 1;
             if (x >= xx && x <= xx + 172 &&
                 y <= r.mTop - 36 && y >= r.mTop - 36 - count * 28)
             {
@@ -2526,10 +2626,7 @@ public:
                     else if (row == 0) mEditorCategory = -1;
                     else
                     {
-                        const S32 favouriteEditors[] = { WORLD, CHAT, INVENTORY };
-                        const S32 categoryEditors[] = { WORLD, WORLD, CHAT, INVENTORY, EMPTY };
-                        const S32 choice = mEditorCategory == 0
-                            ? favouriteEditors[row - 1] : categoryEditors[mEditorCategory];
+                        const S32 choice = editors[row - 1];
                         const S32 id = mOpenNode;
                         mOpenNode = -1;
                         mEditorCategory = -1;
@@ -2634,6 +2731,7 @@ public:
     }
 
 private:
+    DockedPanel mDockedPanels[EDITOR_COUNT];
     Node mNodes[63];
     S32 mOpenNode = -1;
     S32 mEditorCategory = -1;
@@ -3332,6 +3430,7 @@ void LLViewerWindow::draw()
 
     if (sRobotDollyWorkspace)
     {
+        sRobotDollyWorkspace->syncPanels();
         const S32 chat_side = sRobotDollyWorkspace->sideFor(RobotDollyWorkspaceView::CHAT);
         if (LLFloaterIMContainer* chat = LLFloaterIMContainer::findInstance())
         {
