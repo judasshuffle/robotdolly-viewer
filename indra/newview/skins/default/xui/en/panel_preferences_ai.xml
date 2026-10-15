@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<panel
+    border="true"
+    follows="left|top|right|bottom"
+    height="438"
+    label="AI Graphics"
+    layout="topleft"
+    left="102"
+    name="AI Graphics panel"
+    top="1"
+    width="517">
+
+    <text
+        name="AIHeading"
+        layout="topleft"
+        left="20"
+        top="20"
+        width="450"
+        height="22"
+        font="SansSerifLarge">
+        NVIDIA Neural Rendering
+    </text>
+
+    <check_box
+        control_name="RobotDollyAIEnabled"
+        name="RobotDollyAIEnabled"
+        label="Enable AI enhancement"
+        layout="topleft"
+        left="20"
+        top="65"
+        width="300"
+        height="20" />
+
+    <text
+        name="AIIntensityLabel"
+        layout="topleft"
+        left="20"
+        top="115"
+        width="400"
+        height="18">
+        Neural rendering intensity
+    </text>
+
+    <slider
+        name="RobotDollyAIIntensity"
+        control_name="RobotDollyAIIntensity"
+        layout="topleft"
+        left="20"
+        top="145"
+        width="350"
+        height="20"
+        min_val="0"
+        max_val="100"
+        increment="5"
+        initial_value="85"
+        show_text="true" />
+
+    <button
+        name="RobotDollyAIApply"
+        label="Apply AI Settings"
+        layout="topleft"
+        left="20"
+        top="195"
+        width="175"
+        height="26" />
+
+    <text
+        name="RobotDollyAISettingsStatus"
+        layout="topleft"
+        left="20"
+        top="245"
+        width="470"
+        height="40"
+        font="SansSerifSmall">
+        Changes will take effect when applied.
+    </text>
+
+</panel>

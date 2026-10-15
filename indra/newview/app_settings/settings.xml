@@ -16,6 +16,14 @@
     <key>Type</key><string>String</string>
     <key>Value</key><string></string>
   </map>
+<key>RobotDollyAIIntensity</key>
+  <map>
+    <key>Comment</key>
+    <string>NVIDIA neural rendering intensity, from 0 to 100 percent.</string>
+    <key>Persist</key><integer>1</integer>
+    <key>Type</key><string>F32</string>
+    <key>Value</key><real>85.0</real>
+</map>
   <key>ImporterDebugVerboseLogging</key>
   <map>
     <key>Comment</key>
