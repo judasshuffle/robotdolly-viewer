@@ -27,6 +27,10 @@
 #include "llviewerprecompiledheaders.h"
 #include "llviewerwindow.h"
 #include "llrobotdollyai.h"
+#include "robotdolly/layout_io.h"
+#include <array>
+#include <filesystem>
+#include <set>
 #include "llfloaterimcontainer.h"
 
 
@@ -2295,7 +2299,89 @@ public:
         mNodes[0].fraction = 0.56f;
         mNodes[1].used = true; mNodes[1].parent = 0; mNodes[1].editor = WORLD;
         mNodes[2].used = true; mNodes[2].parent = 0; mNodes[2].editor = CHAT;
+        loadLayout();
     }
+
+    static std::string editorKey(S32 editor)
+    {
+        if (editor < WORLD || editor >= EDITOR_COUNT) return "";
+        if (editor == WORLD) return "world";
+        if (editor == EMPTY) return "empty";
+        const auto& entry = panelEntry(editor);
+        return std::string(entry.floater) + ":" + entry.tab;
+    }
+    static std::filesystem::path layoutPath()
+    {
+        const std::string path = gDirUtilp->getExpandedFilename(LL_PATH_USER_SETTINGS, "robotdolly-layout.txt");
+        return std::filesystem::path(std::u8string(path.begin(), path.end()));
+    }
+    void loadLayout()
+    {
+        const auto path = layoutPath();
+        std::error_code error;
+        if (!std::filesystem::exists(path, error)) return;
+        if (std::filesystem::file_size(path, error) > 65536 || error) return;
+        std::ifstream in(path, std::ios::binary);
+        if (!in) return;
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        auto restored = mNodes;
+        const auto editorId = [](const std::string& name) -> int {
+            for (S32 editor = WORLD; editor < EDITOR_COUNT; ++editor)
+                if (editorKey(editor) == name) return editor;
+            return -1;
+        };
+        bool valid = !in.bad() && robotdolly::decodeLayout(text, editorId, restored);
+        std::set<std::string> instances;
+        for (const Node& n : restored)
+            if (n.used && !n.split && n.editor != EMPTY) {
+                const std::string instance = n.editor == WORLD ? "world" : panelEntry(n.editor).floater;
+                valid = instances.insert(instance).second && valid;
+            }
+        if (!valid) {
+            LL_WARNS("RobotDolly") << "Invalid saved layout; using default without overwriting " << path << LL_ENDL;
+            return;
+        }
+        mNodes = restored;
+        mRestorePanels = true;
+    }
+    void saveLayout()
+    {
+        mLayoutDirty = true;
+        std::string text;
+        if (!robotdolly::encodeLayout(mNodes, editorKey, text)) {
+            mSaveLabel = "SAVE FAILED";
+            return;
+        }
+        const auto path = layoutPath();
+        const auto temporary = std::filesystem::path(path.wstring() + L".tmp");
+        bool written = false;
+        {
+            std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+            out.write(text.data(), text.size());
+            out.close();
+            written = static_cast<bool>(out);
+        }
+        std::error_code error;
+        bool replaced = false;
+        if (written) {
+#if LL_WINDOWS
+            replaced = MoveFileExW(temporary.c_str(), path.c_str(),
+                                  MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
+#else
+            std::filesystem::rename(temporary, path, error);
+            replaced = !error;
+#endif
+        }
+        if (!replaced) {
+            std::filesystem::remove(temporary, error);
+            mSaveLabel = "SAVE FAILED";
+            LL_WARNS("RobotDolly") << "Could not save workspace to " << path << LL_ENDL;
+            return;
+        }
+        mLayoutDirty = false;
+        mSaveLabel = "LAYOUT SAVED";
+    }
+    void finishLayout() { if (mLayoutDirty) saveLayout(); }
 
     LLRect nodeRect(S32 id) const
     {
@@ -2371,6 +2457,7 @@ public:
             if (chat->getParent() == this) chat->setVisible(sideFor(CHAT) >= 0);
         if (LLFloater* inv = LLFloaterReg::findInstance("inventory"))
             if (inv->getParent() == this) inv->setVisible(sideFor(INVENTORY) >= 0);
+        saveLayout();
     }
 
     void releaseUnusedPanels()
@@ -2393,6 +2480,20 @@ public:
 
     void syncPanels()
     {
+        // Do not create session-dependent floaters on the login screen, or
+        // mistake shutdown's hidden floaters for the user removing a panel.
+        if (LLStartUp::getStartupState() != STATE_STARTED || LLAppViewer::instance()->quitRequested()) return;
+        if (mRestorePanels) {
+            mRestorePanels = false;
+            for (const Node& node : mNodes) {
+                if (!node.used || node.split) continue;
+                const auto& entry = panelEntry(node.editor);
+                if (!entry.floater[0]) continue;
+                LLSD key;
+                if (entry.tab[0]) key["people_panel_tab_name"] = entry.tab;
+                LLFloaterReg::showInstance(entry.floater, key);
+            }
+        }
         releaseUnusedPanels();
         for (S32 editor = PEOPLE; editor < EDITOR_COUNT; ++editor)
         {
@@ -2403,6 +2504,7 @@ public:
             if (!floater->getVisible())
             {
                 mNodes[id].editor = EMPTY; // Native close button also undocks.
+                saveLayout();
                 continue;
             }
             DockedPanel& saved = mDockedPanels[editor];
@@ -2425,7 +2527,7 @@ public:
 
     S32 freeNode() const
     {
-        for (S32 i = 3; i < 63; ++i) if (!mNodes[i].used) return i;
+        for (S32 i = 1; i < 63; ++i) if (!mNodes[i].used) return i;
         return -1;
     }
     void splitArea(S32 id, bool vertical)
@@ -2453,6 +2555,7 @@ public:
         mNodes[id].fraction = 0.5f;
         mNodes[id].editor = EMPTY;
         mOpenNode = -1;
+        saveLayout();
     }
     void joinArea(S32 id)
     {
@@ -2472,6 +2575,7 @@ public:
         mNodes[parent].parent = grandparent;
         mNodes[parent].editor = retained_editor;
         mOpenNode = -1;
+        saveLayout();
     }
 
     // A dedicated window class keeps the pop-out's close action independent
@@ -2566,8 +2670,8 @@ public:
             }
             if (mOpenArea == i)
             {
-                const char* actions[] = { "SPLIT H", "SPLIT V", "JOIN", "POP OUT TEST" };
-                const S32 action_count = mNodes[i].editor == WORLD ? 4 : 3;
+                const char* actions[] = { "SPLIT H", "SPLIT V", "JOIN", mSaveLabel.c_str(), "POP OUT TEST" };
+                const S32 action_count = mNodes[i].editor == WORLD ? 5 : 4;
                 for (S32 j = 0; j < action_count; ++j)
                 {
                     const S32 y = top - 36 - j * 28;
@@ -2640,7 +2744,7 @@ public:
         {
             const LLRect r = nodeRect(mOpenArea);
             const S32 ax = r.mLeft + 183;
-            const S32 action_count = mNodes[mOpenArea].editor == WORLD ? 4 : 3;
+            const S32 action_count = mNodes[mOpenArea].editor == WORLD ? 5 : 4;
             if (x >= ax && x <= ax + 140 &&
                 y <= r.mTop - 36 && y >= r.mTop - 36 - action_count * 28)
             {
@@ -2650,7 +2754,8 @@ public:
                 if (action == 0) splitArea(id, false);
                 if (action == 1) splitArea(id, true);
                 if (action == 2) joinArea(id);
-                if (action == 3 && mNodes[id].editor == WORLD) popOutTest();
+                if (action == 3) { saveLayout(); mOpenArea = id; }
+                if (action == 4 && mNodes[id].editor == WORLD) popOutTest();
                 return true;
             }
         }
@@ -2677,6 +2782,7 @@ public:
                 {
                     mOpenNode = -1;
                     mOpenArea = previous_area_menu == i ? -1 : i;
+                    mSaveLabel = "SAVE LAYOUT";
                     return true;
                 }
             }
@@ -2725,6 +2831,7 @@ public:
             handleHover(x, y, mask);
             mDragNode = -1;
             gFocusMgr.setMouseCapture(nullptr);
+            saveLayout();
             return true;
         }
         return LLView::handleMouseUp(x, y, mask);
@@ -2732,7 +2839,10 @@ public:
 
 private:
     DockedPanel mDockedPanels[EDITOR_COUNT];
-    Node mNodes[63];
+    std::array<Node, 63> mNodes{};
+    bool mRestorePanels = false;
+    bool mLayoutDirty = false;
+    std::string mSaveLabel = "SAVE LAYOUT";
     S32 mOpenNode = -1;
     S32 mEditorCategory = -1;
     S32 mOpenArea = -1;
@@ -3033,6 +3143,7 @@ void LLViewerWindow::initWorldUI()
 // Destroy the UI
 void LLViewerWindow::shutdownViews()
 {
+    if (sRobotDollyWorkspace) sRobotDollyWorkspace->finishLayout();
     // clean up warning logger
     RecordToChatConsole::getInstance()->stopRecorder();
     LL_INFOS() << "Warning logger is cleaned." << LL_ENDL ;
@@ -3086,6 +3197,7 @@ void LLViewerWindow::shutdownViews()
     // Delete all child views.
     delete mRootView;
     mRootView = NULL;
+    sRobotDollyWorkspace = nullptr;
     LL_INFOS() << "RootView deleted." << LL_ENDL ;
 
     LLMenuOptionPathfindingRebakeNavmesh::getInstance()->quit();
@@ -3428,7 +3540,10 @@ void LLViewerWindow::draw()
         }
     }
 
-    if (sRobotDollyWorkspace)
+    // Restored Inventory must not be constructed before login initializes
+    // inventory fetching. The legacy Chat/Inventory hosts need this guard too.
+    if (sRobotDollyWorkspace && LLStartUp::getStartupState() == STATE_STARTED &&
+        !LLAppViewer::instance()->quitRequested())
     {
         sRobotDollyWorkspace->syncPanels();
         const S32 chat_side = sRobotDollyWorkspace->sideFor(RobotDollyWorkspaceView::CHAT);
