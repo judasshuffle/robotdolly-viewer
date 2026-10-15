@@ -2976,7 +2976,7 @@ void LLViewerWindow::initBase()
     // Only the divider accepts input; all other clicks pass through to the viewer.
     LLView::Params rdp;
     rdp.name("robot_dolly_workspace");
-    rdp.rect(LLRect(0, getWindowHeightScaled() - 110,
+    rdp.rect(LLRect(0, mWorldViewPlaceholder.get()->calcScreenRect().mTop,
                     getWindowWidthScaled(), 0));
     rdp.mouse_opaque(false);
     rdp.follows.flags(FOLLOWS_ALL);
@@ -4988,6 +4988,20 @@ void LLViewerWindow::updateWorldViewRect(bool use_full_window)
     // as the real camera/rendering viewport. Preserve full-window snapshots.
     if (!use_full_window && sRobotDollyWorkspace)
     {
+        // Follow the real navigation/menu bounds instead of reserving a fixed
+        // 110-pixel strip. Keep the optional compact location bar accessible.
+        if (mWorldViewPlaceholder.get())
+        {
+            S32 top = mWorldViewPlaceholder.get()->calcScreenRect().mTop;
+            if (mTopInfoContainer && LLPanelTopInfoBar::instanceExists() &&
+                LLPanelTopInfoBar::getInstance()->isInVisibleChain())
+                top = llmin(top, mTopInfoContainer->calcScreenRect().mBottom);
+            S32 local_x, local_top;
+            getRootView()->screenPointToLocal(0, top, &local_x, &local_top);
+            const LLRect workspace(0, llmax(1, local_top), getWindowWidthScaled(), 0);
+            if (sRobotDollyWorkspace->getRect() != workspace)
+                sRobotDollyWorkspace->setShape(workspace);
+        }
         const LLRect dock = sRobotDollyWorkspace->worldRect();
         new_world_rect = LLRect(
             ll_round((F32)dock.mLeft * mDisplayScale.mV[VX]),
