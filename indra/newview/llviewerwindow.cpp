@@ -2983,6 +2983,12 @@ void LLViewerWindow::initBase()
     sRobotDollyWorkspace = new RobotDollyWorkspaceView(rdp);
     getRootView()->addChild(sRobotDollyWorkspace);
 
+    // The workspace is a root-level sibling of main_view. Menus and tooltips
+    // must share that layer above it, otherwise main_view's descendants (such
+    // as the Favorites "More" menu) draw and receive input behind docked panes.
+    getRootView()->addChild(gMenuHolder);
+    getRootView()->addChild(gToolTipView);
+
 }
 
 void LLViewerWindow::initWorldUI()
