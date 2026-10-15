@@ -3,6 +3,8 @@
 #include <cstring>
 #include <cwchar>
 int wmain(int argc, wchar_t** argv) {
+    // Match the real sidecar's physical-pixel coordinate system.
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     if (argc != 2 || !FindWindowW(argv[1], nullptr)) return 2;
     WNDCLASSW wc{};
     wc.lpfnWndProc = DefWindowProcW;
@@ -10,6 +12,11 @@ int wmain(int argc, wchar_t** argv) {
     wc.lpszClassName = L"DLSS5SidecarControl";
     RegisterClassW(&wc);
     CreateWindowW(wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, wc.hInstance, nullptr);
+    wc.lpszClassName = L"SidecarOverlay";
+    RegisterClassW(&wc);
+    // Deliberately missing click-through styles; the viewer must repair them.
+    CreateWindowExW(WS_EX_NOACTIVATE, wc.lpszClassName, L"mock overlay",
+        WS_POPUP | WS_VISIBLE, 0, 0, 100, 100, nullptr, nullptr, wc.hInstance, nullptr);
     HANDLE map = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
         sizeof(sidecar::SidecarStatus), L"Local\\DLSS5SidecarStatus");
     auto* status = static_cast<sidecar::SidecarStatus*>(MapViewOfFile(map, FILE_MAP_WRITE, 0, 0, 0));

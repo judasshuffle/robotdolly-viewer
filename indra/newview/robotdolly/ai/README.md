@@ -13,9 +13,22 @@ that process, stops it when disabled, and uses a Windows job to terminate it
 if the viewer closes unexpectedly. It refuses multiple matching viewer windows
 so it does not capture the wrong session. It does not launch NeuralScreen.
 
-This captures the **whole main window**, including chat, HUDs and menus. The
-existing pop-out is not selected. Keep the viewer windowed. The external
-renderer handles GPU detection and capture. A renderer that exits, reports an
+The renderer still captures the **whole main window**. The viewer now positions
+that capture at the visible Windows frame origin and clips its overlay to
+`getWorldViewRectRaw()`, the same raw-pixel rectangle used by the yellow
+`RD 3D viewport` diagnostic in `llviewerwindow.cpp`. This removes the captured
+title bar and surrounding UI from the visible overlay without altering neural
+processing. Floating controls inside the viewport are still part of the capture.
+The overlay is layered, transparent to mouse input, and does not take focus
+([Windows layered-window behavior](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features)).
+
+Geometry follows the viewer UI update loop. Minimize and loss of foreground
+mask the overlay; Ctrl+Alt+D remains owned by the sidecar and is not overridden.
+The patched backend has fixed-size capture resources, so a window size change
+temporarily masks the overlay and relaunches the same configured renderer after
+600 ms of stable size. Neural warm-up repeats after this restart. A hidden overlay
+is not restarted until the user shows it again. The existing pop-out is not selected.
+The external renderer handles GPU detection and capture. A renderer that exits, reports an
 error or falls back to passthrough is stopped and the preference resets to off.
 The setting is session-only; failed initialization cannot repeat at every login.
 Status is shown below the checkbox; hover it for the complete message.
@@ -45,15 +58,18 @@ these requirements is satisfied by compiling this viewer control.
 ## Validation and remaining work
 
 The Windows control tests use a fake renderer and cover startup with spaces in
-paths, target ambiguity, missing dependencies, status exchange, shutdown, and
-passthrough rejection. They do not test the actual GPU pipeline. The Linux
+paths, target ambiguity, missing dependencies, status exchange, shutdown,
+passthrough rejection, frame/viewport alignment, click-through styles, movement,
+minimize/restore, resize/maximize relaunch, and preserving emergency hide.
+They require an interactive Windows desktop and briefly focus test windows.
+They do not test actual mouse delivery through DirectComposition or the GPU pipeline. The Linux
 test covers unsupported-platform refusal. The dedicated GitHub workflow also
 attempts an open-source Windows viewer build; a passing control test alone is
 not a passing viewer build.
 
 Before considering this feature complete:
 
-- Supply and validate a compatible backend/runtime on the user's RTX 4090.
+- Preserve the user's already-working patched backend/runtime on the RTX 4090.
 - Verify capture, clicks, resizing, minimizing, Alt-Tab, shutdown and failures
   with the real viewer; examine UI placement at different UI scales.
 - Replace external setup with a permitted, packaged backend for a one-install

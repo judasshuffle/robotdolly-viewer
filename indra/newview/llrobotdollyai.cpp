@@ -31,6 +31,14 @@ void updateRobotDollyAI() {
         }
         return;
     }
+    const LLRect world = gViewerWindow->getWorldViewRectRaw();
+    const S32 height = gViewerWindow->getWindowRectRaw().getHeight();
+    ai.updateOverlay(world.mLeft, height - world.mTop,
+                     world.mRight, height - world.mBottom);
+    if (!ai.running()) {
+        gSavedSettings.setBOOL("RobotDollyAIEnabled", false);
+        return;
+    }
     static LLFrameTimer poll_timer;
     if (poll_timer.getElapsedTimeF32() >= 1.f) {
         poll_timer.reset();

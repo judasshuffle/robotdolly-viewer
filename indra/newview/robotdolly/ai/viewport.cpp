@@ -10,6 +10,11 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <dwmapi.h>
+#ifdef _MSC_VER
+#pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "gdi32.lib")
+#endif
 #include "sidecar_control.h"
 #endif
 
@@ -24,6 +29,37 @@ struct AIViewport::Impl {
     std::chrono::steady_clock::time_point updated;
     unsigned int sequence = 0;
     bool received = false;
+    HWND target = nullptr;
+    HWND clipped = nullptr;
+    RECT clip{};
+    RECT captureBounds{};
+    RECT pendingBounds{};
+    std::chrono::steady_clock::time_point resized;
+    std::string executable;
+
+    HWND overlay() const {
+        HWND candidate = nullptr;
+        while ((candidate = FindWindowExW(nullptr, candidate, L"SidecarOverlay", nullptr))) {
+            DWORD owner = 0;
+            GetWindowThreadProcessId(candidate, &owner);
+            if (owner == pid) return candidate;
+        }
+        return nullptr;
+    }
+
+    bool setClip(HWND window, const RECT& rect) {
+        if (clipped == window && EqualRect(&clip, &rect)) return true;
+        HRGN region = CreateRectRgn(rect.left, rect.top, rect.right, rect.bottom);
+        if (!region) return false;
+        if (!SetWindowRgn(window, region, TRUE)) {
+            DeleteObject(region);
+            return false;
+        }
+        // Windows owns the region after a successful SetWindowRgn.
+        clipped = window;
+        clip = rect;
+        return true;
+    }
 
     void close() {
         // Only address the process we created, never another user's overlay.
@@ -36,9 +72,14 @@ struct AIViewport::Impl {
         }
         // KILL_ON_JOB_CLOSE also handles a hung renderer, or viewer shutdown.
         if (job) CloseHandle(job);
-        if (process) CloseHandle(process);
+        if (process) {
+            // A resize relaunch must not race the old control/status channel.
+            WaitForSingleObject(process, 2000);
+            CloseHandle(process);
+        }
         job = process = nullptr;
         pid = 0;
+        target = clipped = nullptr;
     }
 #endif
 };
@@ -90,7 +131,11 @@ bool AIViewport::start(void* window, const std::string& executable) {
 
     std::filesystem::path exe;
     try {
+#if defined(__cpp_char8_t)
+        exe = std::filesystem::path(std::u8string(executable.begin(), executable.end()));
+#else
         exe = std::filesystem::u8path(executable);
+#endif
         if (!exe.is_absolute() || !std::filesystem::is_regular_file(exe))
             return fail("The renderer path must point to an existing executable.");
         if (_wcsicmp(exe.filename().c_str(), L"wowsidecar.exe") != 0)
@@ -134,8 +179,87 @@ bool AIViewport::start(void* window, const std::string& executable) {
     m->started = m->updated = std::chrono::steady_clock::now();
     m->sequence = 0;
     m->received = false;
+    m->target = target;
+    m->executable = executable;
+    if (FAILED(DwmGetWindowAttribute(target, DWMWA_EXTENDED_FRAME_BOUNDS,
+                                    &m->captureBounds, sizeof(RECT))))
+        return fail("Cannot determine the captured window bounds.");
+    m->pendingBounds = m->captureBounds;
+    m->resized = m->started;
     m->message = "Starting AI renderer...";
     return true;
+#endif
+}
+
+void AIViewport::updateOverlay(int left, int top, int right, int bottom) {
+#ifdef _WIN32
+    if (!m->process || !IsWindow(m->target)) return;
+    HWND overlay = m->overlay();
+    if (!overlay) return; // Renderer is still starting.
+    auto fail = [this]() {
+        m->close();
+        m->message = "Cannot align the AI overlay; renderer stopped.";
+    };
+    // HTTRANSPARENT alone cannot forward clicks across process boundaries.
+    const LONG_PTR style = GetWindowLongPtrW(overlay, GWL_EXSTYLE);
+    const LONG_PTR clickThrough = WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE;
+    if ((style & clickThrough) != clickThrough) {
+        SetLastError(0);
+        if (!SetWindowLongPtrW(overlay, GWL_EXSTYLE, style | clickThrough) && GetLastError()) {
+            fail(); return;
+        }
+        if (!SetLayeredWindowAttributes(overlay, 0, 255, LWA_ALPHA)) { fail(); return; }
+    }
+
+    RECT bounds{}, client{};
+    POINT origin{};
+    if (FAILED(DwmGetWindowAttribute(m->target, DWMWA_EXTENDED_FRAME_BOUNDS,
+                                    &bounds, sizeof(bounds))) ||
+        !GetClientRect(m->target, &client) || !ClientToScreen(m->target, &origin)) {
+        fail(); return;
+    }
+    const auto sameSize = [](const RECT& a, const RECT& b) {
+        return a.right - a.left == b.right - b.left && a.bottom - a.top == b.bottom - b.top;
+    };
+    const auto now = std::chrono::steady_clock::now();
+    const bool minimized = IsIconic(m->target) != FALSE;
+    const bool sizeChanged = !sameSize(bounds, m->captureBounds);
+    if (!minimized && !sameSize(bounds, m->pendingBounds)) {
+        m->pendingBounds = bounds;
+        m->resized = now;
+    }
+    // The existing backend allocates its capture/NGX resources once. Restart
+    // through the normal launch path after resizing settles; never stretch an
+    // old capture or change the working neural/zero-motion implementation.
+    // Leave the user's Ctrl+Alt+D hidden state alone until they show it again.
+    if (!minimized && sizeChanged && IsWindowVisible(overlay) &&
+        GetForegroundWindow() == m->target &&
+        now - m->resized >= std::chrono::milliseconds(600)) {
+        const auto executable = m->executable;
+        HWND target = m->target;
+        start(target, executable);
+        return;
+    }
+
+    RECT clip{};
+    if (!minimized && !sizeChanged && GetForegroundWindow() == m->target) {
+        RECT world{left, top, right, bottom};
+        if (IntersectRect(&clip, &world, &client)) {
+            // WGC includes the visible non-client frame. Put that captured
+            // frame back at its original screen origin, then expose only the
+            // real 3D viewport. This removes the captured title bar and UI rim.
+            OffsetRect(&clip, origin.x - bounds.left, origin.y - bounds.top);
+        }
+    }
+    if (!m->setClip(overlay, clip)) { fail(); return; }
+    RECT actual{};
+    if (!GetWindowRect(overlay, &actual)) { fail(); return; }
+    if (!EqualRect(&actual, &bounds)) {
+        // Do not show the window: the renderer owns the emergency hotkey.
+        if (!SetWindowPos(overlay, nullptr, bounds.left, bounds.top,
+                          bounds.right - bounds.left, bounds.bottom - bounds.top,
+                          SWP_NOACTIVATE | SWP_NOZORDER | SWP_ASYNCWINDOWPOS)) fail();
+    }
 #endif
 }
 
