@@ -2147,6 +2147,21 @@ LLPanelPreference::LLPanelPreference()
 //virtual
 bool LLPanelPreference::postBuild()
 {
+    if (hasChild("RobotDollyAIApply", true)) {
+        getChild<LLButton>("RobotDollyAIApply")->setClickedCallback([this](LLUICtrl*, const LLSD&) {
+            // Commit a typed slider value before reading its bound setting.
+            if (LLUICtrl* focus = dynamic_cast<LLUICtrl*>(gFocusMgr.getKeyboardFocus()))
+                if (focus->acceptsTextInput()) focus->onCommit();
+            std::string message;
+            if (applyRobotDollyAIIntensity(message)) {
+                // Cancel must not revert the slider after an explicit Apply.
+                LLControlVariable* control = gSavedSettings.getControl("RobotDollyAIIntensity");
+                if (control) mSavedValues[control] = control->getValue();
+            }
+            getChild<LLTextBox>("RobotDollyAISettingsStatus")->setText(message);
+            getChild<LLTextBox>("RobotDollyAISettingsStatus")->setToolTip(message);
+        });
+    }
     ////////////////////// PanelGeneral ///////////////////
     if (hasChild("display_names_check", true))
     {

@@ -38,7 +38,7 @@
         top="115"
         width="400"
         height="18">
-        Neural rendering intensity
+        Neural rendering intensity (%)
     </text>
 
     <slider
@@ -52,6 +52,7 @@
         min_val="0"
         max_val="100"
         increment="5"
+        decimal_digits="0"
         initial_value="85"
         show_text="true" />
 
@@ -71,6 +72,7 @@
         top="245"
         width="470"
         height="40"
+        word_wrap="true"
         font="SansSerifSmall">
         Changes will take effect when applied.
     </text>
