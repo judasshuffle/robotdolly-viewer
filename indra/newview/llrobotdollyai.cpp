@@ -6,6 +6,7 @@
 #include "llwindow.h"
 #include "llframetimer.h"
 #include "lldir.h"
+#include <filesystem>
 
 namespace {
 robotdolly::AIViewport& renderer() {
@@ -24,7 +25,21 @@ void updateRobotDollyAI() {
         return;
     }
     if (!ai.running()) {
-        const std::string path = gSavedSettings.getString("RobotDollyAIRenderer");
+        std::string path = gSavedSettings.getString("RobotDollyAIRenderer");
+
+// Prefer the renderer bundled with ROBOTDOLLY.
+if (gDirUtilp)
+{
+    const std::filesystem::path bundled =
+        std::filesystem::path(gDirUtilp->getExecutableDir()) /
+        "ai-renderer" / "wowsidecar.exe";
+
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(bundled, ec))
+    {
+        path = bundled.string();
+    }
+}
         if (!gViewerWindow || !gViewerWindow->getWindow() ||
             !ai.start(gViewerWindow->getWindow()->getPlatformWindow(), path)) {
             gSavedSettings.setBOOL("RobotDollyAIEnabled", false);
